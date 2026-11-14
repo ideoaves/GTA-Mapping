@@ -51,7 +51,6 @@ def main(name):
         last = b
         G.log(f'{name} {pts[a][0]}〜{pts[b][0]}秒 赤い点{len(hand)}個 → 照合{len(cand)}点 採用{len(kept)}点 {time.time() - t0:.0f}秒' + ('（赤い点のまま）' if not kept else ''))
     data['points'] = out + pts[last:]
-    os.replace(path, f'probes/{name}_hand.json')
     json.dump(data, open(path, 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))
     G.log(f'{name} {len(pts)}点 → {len(data["points"])}点')
 

@@ -437,15 +437,11 @@
       e.target.disabled = true;
       e.target.textContent = `微調整中（${names.join('・')}）…`;
       try {
-        const res = await fetch('fine-tune', { method: 'POST', body: JSON.stringify(names) });
+        const prior = snap(), res = await fetch('fine-tune', { method: 'POST', body: JSON.stringify(names) });
         if (!res.ok) throw new Error(res.status === 501 ? 'edit.py でページを開いてください' : await res.text());
         const log = await res.text();
-        for (const t of targets) {
-          const fresh = await readTrack({ id: t.member, color: t.color }, t.files);
-          tracks[tracks.indexOf(t)] = fresh;
-          if (current === t) current = fresh;
-        }
-        undo = [], redo = [];
+        for (const t of targets) Object.assign(t, await readTrack({ id: t.member, color: t.color }, t.files));
+        undo.push(prior), redo = [];
         draw();
         alert(log);
       } catch (err) {
