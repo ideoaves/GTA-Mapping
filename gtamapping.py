@@ -45,6 +45,8 @@ SMOOTH_SEC = 10
 THIN_M = 15
 OFFSET_MAX = 600
 START_STEP = 600
+RESTART_AT = '01:00'
+RESTART_LOOK = 40 * 60
 
 dev = 'cuda' if torch.cuda.is_available() else 'cpu'
 sift = cv2.SIFT_create()
@@ -168,9 +170,34 @@ class Stream:
         raw = next((r for dated in (True, False) for found in [t for t in np.linspace(60, self.dur - 120, 20).astype(int) if clock(t, dated)][:5]
                     if (r := flip(found, dated)) is not None), None)
         fixed = raw if raw is not None and abs(raw) <= OFFSET_MAX else min((raw - sign * h * 3600 for h in (9, 12, 24) for sign in (1, -1)), key=abs) if raw is not None else 0
-        self.state['offset'] = fixed if abs(fixed) <= OFFSET_MAX else 0
+        self.state['clock'] = fixed if raw is not None and abs(fixed) <= OFFSET_MAX else None
+        self.state['offset'] = self.state['clock'] or 0
         self.save()
         return f'時刻のずれ {raw}秒' + ('' if raw == self.state['offset'] else f' → {self.state["offset"]:+d}秒に修正') if raw is not None else '時刻を読めないので0秒'
+
+    def announce(self):
+        if 'announce' in self.state or not RESTART_AT:
+            return self.state.get('announce', [])
+        start, jst = self.target['start'], timezone(timedelta(hours=9))
+        base = datetime.fromtimestamp(start, jst)
+        r = base.replace(hour=int(RESTART_AT[:2]), minute=int(RESTART_AT[3:]), second=0, microsecond=0)
+        r = (r + timedelta(days=1) if r < base else r).timestamp() - start - self.state.get('offset', 0)
+        lo, hi, runs = max(0, r - RESTART_LOOK), min(self.dur, r + 300), []
+        if hi > lo:
+            w, h, fps = 640, 120, 4
+            ff = subprocess.Popen(['ffmpeg', '-v', 'error', '-ss', str(lo), '-t', str(hi - lo), '-i', self.video, '-vf', f'fps={fps},scale={FRAME[0]}:{FRAME[1]},crop={w}:{h}:{(FRAME[0] - w) // 2}:0',
+                                   '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-'], stdout=subprocess.PIPE)
+            for k, buf in enumerate(iter(lambda: ff.stdout.read(w * h * 3), b'')):
+                if len(buf) < w * h * 3 or cv2.inRange(cv2.cvtColor(np.frombuffer(buf, np.uint8).reshape(h, w, 3), cv2.COLOR_BGR2HSV), (5, 150, 150), (22, 255, 255)).sum() // 255 < 3000:
+                    continue
+                t = lo + k / fps
+                if runs and t - runs[-1][1] <= 2 / fps:
+                    runs[-1][1] = t
+                else:
+                    runs.append([t, t])
+        self.state['announce'] = [round(s, 2) for s, e in runs if 5 <= e - s <= 10]
+        self.save()
+        return self.state['announce']
 
     def setup(self):
         m, hd = self.state['map'], self.state['hud']
@@ -441,6 +468,8 @@ def analyze(name, target, state, force):
     log(f'{name} ミニマップ {m["shape"]} {m["scale"]}倍 縁{m["rims"]} 徒歩の縮尺{m["walk"]}')
     progress(state, name, status='時刻')
     log(f'{name} {st.measure_offset()}')
+    if RESTART_AT:
+        log(f'{name} 再起動の告知 {len(st.announce())}回')
     st.setup()
     progress(state, name, status='照合', match_begin=time.time())
     cands = st.match(lambda **kw: progress(state, name, **kw))
@@ -467,6 +496,42 @@ def analyze(name, target, state, force):
     return True
 
 
+def align(day):
+    targets = json.load(open(TARGETS, encoding='utf-8'))
+    sts = {n: Stream(n, t) for n, t in targets.items() if n.endswith(f'_day{day}') and all(os.path.exists(p) for p in (f'site/tracks/{n}.json', f'probes/{n}.json', f'video/{n}.mp4'))}
+    clk = {n: st.state.get('clock', st.state.get('offset') or None) for n, st in sts.items()}
+    ev = sorted((targets[n]['start'] + clk[n] + t, n) for n, st in sts.items() if clk[n] is not None for t in st.announce())
+    groups = []
+    for e in ev:
+        if groups and e[0] - groups[-1][-1][0] <= 2:
+            groups[-1].append(e)
+        else:
+            groups.append([e])
+    Ts = [float(np.median([e[0] for e in g])) for g in groups if len({e[1] for e in g}) >= 3]
+
+    def fit(n):
+        s, own = targets[n]['start'], sts[n].announce()
+        hits = lambda o: [T - s - t for t in own for T in Ts if abs(T - s - t - o) <= 1]
+        o = max((T - s - t for T in Ts for t in own), key=lambda o: (len(hits(o)), -abs(o - (clk[n] or 0))), default=None)
+        return None if o is None else round(float(np.median(hits(o))))
+    ann = {n: fit(n) for n in sts}
+    n_ann, n_clk = sum(v is not None for v in ann.values()), sum(v is not None for v in clk.values())
+    use_ann = n_ann >= n_clk
+    log(f'{day}日目の時刻合わせ 告知{n_ann}本・時計{n_clk}本 → {"告知" if use_ann else "時計"}を優先')
+    for n, st in sts.items():
+        new = next((v for v in ((ann[n], clk[n]) if use_ann else (clk[n], ann[n])) if v is not None), 0)
+        st.state['clock'] = clk[n]
+        if new != st.state['offset']:
+            log(f'{n} 時刻のずれ {st.state["offset"]:+d} → {new:+d}秒（{"告知" if new == ann[n] else "時計"}）')
+            st.state['offset'] = new
+            if 'used' in st.state:
+                st.state['used']['offset'] = new
+            track = json.load(open(f'site/tracks/{n}.json', encoding='utf-8'))
+            track['offset'] = new
+            json.dump(track, open(f'site/tracks/{n}.json', 'w', encoding='utf-8'))
+        st.save()
+
+
 def main(arg, force):
     failed, finished = [], []
     probe = f'probes/{arg}.json'
@@ -485,6 +550,9 @@ def main(arg, force):
                 state['streams'][n] = {'status': '待ち'}
                 log(f'{n} を一覧に追加')
     log(f'完了 {len(finished)}本 失敗{len(failed)}本 {" ".join(failed)}')
+    days = {n.rsplit('_day', 1)[1] for n in finished} | ({arg.rsplit('_day', 1)[-1]} if arg and re.fullmatch(r'(\w+_day)?\d+', arg) else set())
+    for d in sorted(days, key=int) if RESTART_AT else []:
+        align(d)
 
 
 if __name__ == '__main__':
