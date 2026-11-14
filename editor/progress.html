@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GTAMapping 進捗バー</title>
+  <style>
+    :root {
+      --背景: #000;
+      --文字: #FFF;
+      --薄い文字: #DDD;
+      --パネル: #555;
+      --バー: #ffFF00;
+      --済み: #88ff00;
+      --失敗: #ff0000;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px 16px;
+      background: var(--背景);
+      color: var(--文字);
+      font-size: 10px;
+      font-family: monospace;
+    }
+
+    .枠 {
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .小さい文字 {
+      color: var(--薄い文字);
+    }
+
+    .行 {
+      background: var(--パネル);
+      padding: 12px 14px;
+      margin-top: 12px;
+    }
+
+    .見出し行 {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .バー外 {
+      height: 10px;
+      background: #2c3038;
+      overflow: hidden;
+      margin: 8px 0 4px;
+    }
+
+    .バー中 {
+      height: 100%;
+      background: var(--バー);
+    }
+
+    .完了 .バー中 {
+      background: var(--済み);
+    }
+
+    .削除 {
+      background: var(--パネル);
+      color: var(--文字);
+      border: 0;
+      padding: 4px 10px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .失敗 {
+      color: var(--失敗);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="枠">
+    <h1>進捗バー</h1>
+    <div class="見出し行"><span class="小さい文字" id="全体">読み込み中…</span><button class="削除" id="削除">表示を削除</button></div>
+    <div id="一覧"></div>
+  </div>
+  <script>
+    const POLL_MS = 2000;
+    const fmt = s => !isFinite(s) ? '計測中' : s >= 3600 ? `${Math.floor(s / 3600)}時間${Math.round(s % 3600 / 60)}分` : s >= 60 ? `${Math.round(s / 60)}分` : `${Math.round(s)}秒`;
+
+    let cleared = 0;
+    try { cleared = Number(localStorage.getItem('progressCleared')) || 0; } catch { }
+
+    async function update() {
+      const state = await fetch('../probes/progress.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).catch(() => null);
+      if (!state) return document.getElementById('全体').textContent = '未解析';
+      const now = Date.now() / 1000, list = Object.entries(state.streams).filter(([, s]) => !(s.now < cleared));
+      const done = list.filter(([, s]) => s.status === '完了').length;
+      document.getElementById('全体').textContent = `${done} / ${list.length}完了 ${fmt(now - Math.max(state.start, cleared))}`;
+      document.getElementById('一覧').innerHTML = list.map(([name, s]) => {
+        const ratio = s.status === '完了' ? 1 : s.status === '照合' && s.total ? s.t / s.total : 0;
+        const left = s.status === '照合' && s.t ? (now - s.match_begin) / s.t * (s.total - s.t) : NaN;
+        const right = s.status === '照合' ? `${(ratio * 100).toFixed(0)}% ・ 残り${fmt(left)}` : s.status === '完了' ? `完了 ${fmt(s.now - s.begin)}` : s.status;
+        const sub = s.status === '失敗' ? s.note : s.status === '完了' ? `${s.found}点 → 採用${s.kept}点` : s.status === '照合' ? `${fmt(now - s.match_begin)} ・ ${s.tried ? `${Math.round(s.found / s.tried * 100)}%` : '計測中'}` : '';
+        return `<div class="行 ${s.status === '完了' ? '完了' : ''}"><div class="見出し行"><span>${name}</span><span class="小さい文字 ${s.status === '失敗' ? '失敗' : ''}">${right}</span></div>
+          <div class="バー外"><div class="バー中" style="width:${(ratio * 100).toFixed(1)}%"></div></div><div class="小さい文字">${sub}</div></div>`;
+      }).join('');
+    }
+    document.getElementById('削除').onclick = () => {
+      cleared = Date.now() / 1000;
+      try { localStorage.setItem('progressCleared', cleared); } catch { }
+      update();
+    };
+    update();
+    setInterval(update, POLL_MS);
+  </script>
+</body>
+
+</html>

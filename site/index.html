@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>GTAマップ</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@100..700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --背景: #eee;
+      --文字: #FFF;
+      --薄い文字: #888;
+      --パネル: #333;
+      --動画幅: 720px;
+      --凡例高: calc(100dvh - 20px - min(var(--動画幅), calc(100vw - 32px)) * 9 / 16 - 64px);
+      --不参加: #bbb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--背景);
+      color: var(--文字);
+      font-family: "IBM Plex Sans JP", sans-serif;
+      overflow: hidden;
+    }
+
+    .地図欄 {
+      position: relative;
+      width: 100vw;
+      height: 100dvh;
+    }
+
+    #地図 {
+      width: 100%;
+      height: 100%;
+      background: var(--背景);
+      outline: none;
+    }
+
+    #地図 .leaflet-tile {
+      filter: grayscale(1) brightness(0.93);
+    }
+
+    .leaflet-tile-pane {
+      opacity: 0.4;
+    }
+
+    .凡例 {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      max-width: min(480px, calc(100vw - 20px));
+      background: var(--パネル);
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .動画列 {
+      position: absolute;
+      right: 16px;
+      bottom: 24px;
+      z-index: 1000;
+      width: min(var(--動画幅), calc(100vw - 32px));
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .動画窓 {
+      position: relative;
+      display: grid;
+      gap: 4px;
+    }
+
+    .動画選択 {
+      --色: var(--パネル);
+      --文字色: #fff;
+      justify-self: start;
+      padding: 2px 8px;
+    }
+
+    .動画選択::after {
+      content: "▾";
+      margin-left: 6px;
+    }
+
+    .動画候補 {
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: 0;
+      right: 0;
+      z-index: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: var(--パネル);
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+
+    .動画候補[hidden] {
+      display: none;
+    }
+
+    .動画窓 iframe {
+      width: 100%;
+      height: auto;
+      aspect-ratio: 16 / 9;
+      border: 0;
+    }
+
+    .空 iframe {
+      display: none;
+    }
+
+    select {
+      appearance: none;
+      width: 100%;
+      background: var(--パネル);
+      color: inherit;
+      font: inherit;
+      border: 0;
+      padding: 6px 24px 6px 8px;
+    }
+
+    .選択 {
+      position: relative;
+    }
+
+    .選択::after {
+      content: "▾";
+      position: absolute;
+      right: 8px;
+      top: 50%;
+      transform: translateY(-50%);
+      pointer-events: none;
+    }
+
+    .左上 {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+    }
+
+    .操作盤 {
+      position: absolute;
+      z-index: 1000;
+      left: 16px;
+      right: calc(var(--動画幅) + 32px);
+      bottom: 16px;
+      background: var(--パネル);
+      padding: 5px 10px;
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    #時刻バー {
+      flex: 1;
+      appearance: none;
+      height: 4px;
+      background: linear-gradient(to right, #f00 var(--再生バー, 0%), #fff5 0);
+      cursor: pointer;
+    }
+
+    #時刻バー::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #f00;
+    }
+
+    #時刻バー::-moz-range-thumb {
+      width: 12px;
+      height: 12px;
+      border: 0;
+      border-radius: 50%;
+      background: #f00;
+    }
+
+    .時刻 {
+      font-variant-numeric: tabular-nums;
+    }
+
+    .凡例 summary {
+      list-style: none;
+      cursor: pointer;
+    }
+
+    .凡例 summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .凡例 summary::after {
+      content: " ▾";
+    }
+
+    .凡例[open] summary::after {
+      content: " ▴";
+    }
+
+    .凡例[open] summary {
+      margin-bottom: 6px;
+    }
+
+    #凡例 {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      overflow-y: auto;
+      max-height: calc(var(--凡例高) - 36px);
+    }
+
+    .職業行 {
+      display: flex;
+      gap: 4px;
+    }
+
+    .名前欄 {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 4px;
+    }
+
+    .切替 {
+      background: var(--色);
+      color: var(--文字色);
+      padding: 0 5px;
+      font-size: 12px;
+    }
+
+    .職業 {
+      --色: #333;
+      --文字色: #fff;
+    }
+
+    #凡例 .職業:not(.非表示) {
+      --色: #fff;
+      --文字色: #000;
+    }
+
+    .切替.不参加 {
+      background: var(--不参加);
+      color: #fff;
+      opacity: 0.5;
+    }
+
+    .切替.非表示 {
+      opacity: 0.35;
+    }
+
+    .地図ボタン {
+      --色: var(--パネル);
+      --文字色: #fff;
+      padding: 2px 8px;
+      font-size: inherit;
+    }
+
+    .施設札 {
+      width: auto !important;
+      height: auto !important;
+      white-space: nowrap;
+      font-size: 8px;
+      color: #000;
+    }
+
+    .施設札 span {
+      display: block;
+      background: #DDD;
+      transform: translate(-50%, -50%);
+    }
+
+    .出典 {
+      position: absolute;
+      z-index: 1000;
+      bottom: 0;
+      right: 0;
+      padding: 4px 10px;
+      text-align: right;
+      color: var(--薄い文字);
+      font-size: 8px;
+    }
+
+    .出典 a {
+      color: inherit;
+    }
+
+    .名札 {
+      background: none;
+      border: 0;
+      box-shadow: none;
+      padding: 0;
+      font-size: 8px;
+    }
+
+    .名札 span {
+      display: block;
+      padding: 1px 6px;
+    }
+
+    .名札::before {
+      display: none;
+    }
+
+    button {
+      background: none;
+      border: 0;
+      padding: 0;
+      font: inherit;
+      color: inherit;
+      cursor: pointer;
+    }
+
+    button svg {
+      width: 14px;
+      height: 14px;
+      display: block;
+      fill: #fff;
+    }
+
+    button:active svg {
+      fill: #aaa;
+    }
+
+    @media (max-width: 900px) {
+      body {
+        overflow: auto;
+      }
+
+      .地図欄 {
+        height: auto;
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      :root {
+        --地図高: max(50dvh, calc(100dvh - (100vw - 32px) * 9 / 16 - 96px));
+        --凡例高: calc(var(--地図高) - 20px);
+      }
+
+      #地図 {
+        height: var(--地図高);
+        flex: none;
+      }
+
+      .操作盤,
+      .出典 {
+        position: static;
+      }
+
+      .動画列 {
+        position: relative;
+        inset: auto;
+        z-index: 1000;
+        width: auto;
+        padding: 10px 16px;
+      }
+
+      .出典 {
+        margin-top: auto;
+      }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="地図欄">
+    <div id="地図"></div>
+    <div class="左上">
+      <label class="選択"><select id="日付"></select></label>
+      <label class="選択"><select id="経路">
+          <option value="all">全ての経路</option>
+          <option value="past" selected>今までの経路</option>
+          <option value="none">経路なし</option>
+        </select></label>
+      <button id="施設名" class="切替 地図ボタン">施設名</button>
+    </div>
+    <div class="操作盤">
+      <button id="再生" title="再生"></button>
+      <button id="早送り" title="60倍速"></button>
+      <input type="range" id="時刻バー" min="0" max="1" step="any" value="0">
+      <span class="時刻" id="時刻表示">--</span>
+    </div>
+    <details class="凡例">
+      <summary>メンバー選択</summary>
+      <div id="凡例"></div>
+    </details>
+    <div class="動画列">
+      <div class="動画窓"><button class="切替 動画選択">動画を選択</button>
+        <div class="動画候補" hidden></div>
+        <div class="プレーヤー"></div>
+      </div>
+      <div class="動画窓"><button class="切替 動画選択">動画を選択</button>
+        <div class="動画候補" hidden></div>
+        <div class="プレーヤー"></div>
+      </div>
+    </div>
+    <div class="出典">地図: <a href="https://forum.cfx.re/t/release-postal-code-map-minimap-new-improved-v1-3/147458"
+        target="_blank" rel="noopener">Postal Code Map &amp; Minimap v1.3</a> by Virus_City</div>
+  </div>
+  <script>
+    let MEMBERS = [], GROUPS = {}, GROUP_COLORS = {}, PLACES = [], DAYS = [];
+    const PLAY_SPEED = 60;
+    const GAP_SECONDS = 300;
+    const CURVE_STEP = 15;
+    const CURVE_MAX = 24;
+    const LINE_WIDTH = 1.6;
+    const LINE_OPACITY = 0.85;
+    const EDGE_WIDTH = 2;
+    const DOT_RADIUS = 6;
+    const MENU_HEIGHT = 400;
+    const START_VIEW = { lat: -120, lng: 275, zoom: 3.25 };
+
+    const slider = document.getElementById('時刻バー');
+    let map = null, dots = null, tracks = [], tMin = 0, tMax = 0;
+
+    const cut = (a, b) => b[0] - a[0] > GAP_SECONDS || b[6];
+    const approx = p => String(p[4]).endsWith('0');
+
+    function curveOf(points) {
+      return points.slice(0, -1).map((a, i) => {
+        const b = points[i + 1];
+        if (cut(a, b)) return null;
+        const p0 = i && !cut(points[i - 1], a) ? points[i - 1] : a;
+        const p3 = points[i + 2] && !cut(b, points[i + 2]) ? points[i + 2] : b;
+        const n = Math.max(1, Math.min(CURVE_MAX, Math.ceil(Math.hypot(b[1] - a[1], b[2] - a[2]) / CURVE_STEP)));
+        const P = [p0, a, b, p3].map(p => [p[1], p[2]]);
+        const gap = (q, r) => Math.max(1e-3, Math.hypot(r[0] - q[0], r[1] - q[1]) ** 0.5);
+        const t1 = gap(P[0], P[1]), t2 = t1 + gap(P[1], P[2]), t3 = t2 + gap(P[2], P[3]);
+        const at = u => {
+          const t = t1 + (t2 - t1) * u, mix = (q, r, ta, tb) => q.map((v, k) => ((tb - t) * v + (t - ta) * r[k]) / (tb - ta));
+          const A1 = mix(P[0], P[1], 0, t1), A2 = mix(P[1], P[2], t1, t2), A3 = mix(P[2], P[3], t2, t3), C = mix(mix(A1, A2, 0, t2), mix(A2, A3, t1, t3), t1, t2);
+          return [C[1], C[0]];
+        };
+        const part = (u0, u1, m = Math.max(1, Math.ceil(n * (u1 - u0)))) => Array.from({ length: m + 1 }, (_, k) => at(u0 + (u1 - u0) * k / m));
+        return { index: i, dashed: approx(a) || approx(b), at, part, pts: part(0, 1) };
+      });
+    }
+
+    const STORE_KEY = 'GTAMapping:' + location.pathname;
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}'); } catch { }
+    const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(saved)); } catch { } };
+    let pathMode = saved.path || 'past';
+
+    function draw() {
+      const now = +slider.value;
+      const runsOf = list => {
+        const out = { solid: [], dashed: [] };
+        let run = null;
+        list.forEach(([seg, u0, u1]) => {
+          const ps = u0 === 0 && u1 === 1 ? seg.pts : seg.part(u0, u1), key = seg.dashed ? 'dashed' : 'solid';
+          if (run && run.key === key && run.end === seg.index - 1) run.pts.push(...ps.slice(1));
+          else out[key].push((run = { key, pts: [...ps] }).pts);
+          run.end = seg.index;
+        });
+        return [out.solid, out.dashed];
+      };
+      const below = (ps, lo = 0, hi = ps.length) => lo >= hi ? lo : ps[(lo + hi) >> 1][0] <= now ? below(ps, ((lo + hi) >> 1) + 1, hi) : below(ps, lo, (lo + hi) >> 1);
+      const put = (lines, edges, list) => runsOf(list).forEach((runs, n) => { lines[n].setLatLngs(runs); edges[n].setLatLngs(runs); });
+      for (const tr of tracks) {
+        const i = tr.visible ? below(tr.points) - 1 : -1;
+        const last = i >= 0 ? tr.points[i] : tr.visible && pathMode === 'all' && tr.points[0];
+        if (!last) { tr.layers.forEach(l => l.remove()); continue; }
+        tr.layers.forEach(l => l !== tr.head && l.addTo(map));
+        const seg = i >= 0 && tr.segs[i], next = seg && tr.points[i + 1];
+        const k = next ? (now - last[0]) / (next[0] - last[0]) : 0;
+        const head = next ? seg.at(k) : [last[2], last[1]];
+        if (tr.key !== `${i} ${pathMode}`) {
+          const full = (from, to) => tr.segs.slice(from, to).filter(Boolean).map(s => [s, 0, 1]);
+          tr.key = `${i} ${pathMode}`;
+          put(tr.done, tr.doneEdge, pathMode === 'none' ? [] : full(0, Math.max(0, i)));
+          put(tr.later, tr.laterEdge, pathMode === 'all' ? full(i + 1) : []);
+        }
+        put(tr.cur, tr.curEdge, pathMode !== 'none' && next ? [[seg, 0, k]] : []);
+        put(tr.curLater, tr.curLaterEdge, pathMode === 'all' && next ? [[seg, k, 1]] : []);
+        const fresh = (next || now - last[0] <= GAP_SECONDS ? 1 : 0.35) * (approx(last) || (next && approx(next)) ? 0.6 : 1);
+        if (i < 0 || (i === tr.points.length - 1 && now - last[0] > GAP_SECONDS)) tr.head.remove();
+        else tr.head.addTo(map).setLatLng(head).setStyle({ opacity: 0.9 * fresh, fillOpacity: fresh });
+      }
+      slider.style.setProperty('--再生バー', `${(now - tMin) / (tMax - tMin) * 100}%`);
+      document.getElementById('時刻表示').textContent = new Date(now * 1000).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' });
+    }
+
+    let fast = false, solo = false, ticking = false, resume = false, dragging = false, seekTimer = 0, lastFrame = 0;
+    const slots = [...document.querySelectorAll('.動画窓')].map(el => ({ el, pick: el.querySelector('.動画選択'), list: el.querySelector('.動画候補'), player: null, track: null }));
+    slots.forEach(s => s.pick.onclick = () => { s.list.style.maxHeight = `${Math.min(MENU_HEIGHT, s.pick.getBoundingClientRect().top - 14)}px`; s.list.hidden = !s.list.hidden; });
+    document.addEventListener('pointerdown', e => {
+      slots.forEach(s => { if (!s.el.contains(e.target)) s.list.hidden = true; });
+      const legend = document.querySelector('.凡例');
+      if (!legend.contains(e.target)) legend.open = false;
+    }, true);
+    const playBtn = document.getElementById('再生'), fastBtn = document.getElementById('早送り');
+    const icon = d => `<svg viewBox="0 0 16 16"><path d="${d}"/></svg>`;
+    const PLAY_ICON = icon('M4 2l10 6-10 6z'), PAUSE_ICON = icon('M3 2h4v12H3zM9 2h4v12H9z'), FAST_ICON = icon('M1 3l7 5-7 5zM8 3l7 5-7 5z');
+    const active = s => s.track && s.player && s.player.getPlayerState;
+    const playing = s => active(s) && s.player.getPlayerState() === 1;
+    const videoPlaying = () => slots.some(playing);
+    const updateButtons = () => { playBtn.innerHTML = videoPlaying() || solo ? PAUSE_ICON : PLAY_ICON; fastBtn.innerHTML = fast ? PAUSE_ICON : FAST_ICON; };
+    updateButtons();
+
+    const partAt = track => track.parts.filter(p => p.start <= +slider.value).pop() || track.parts[0];
+
+    function seekSlot(s) {
+      if (!active(s)) return;
+      const p = partAt(s.track), at = +slider.value - p.start;
+      if (p !== s.part) { const go = playing(s); s.part = p; return go ? s.player.loadVideoById(p.video, Math.max(0, at)) : s.player.cueVideoById(p.video, Math.max(0, at)); }
+      if (at < 0 || [-1, 5].includes(s.player.getPlayerState())) return s.player.cueVideoById(p.video, Math.max(0, at));
+      s.player.seekTo(at, true);
+    }
+    const seekVideo = () => slots.forEach(seekSlot);
+    const playAll = () => { solo = false; slots.forEach(s => { if (active(s) && +slider.value >= s.part.start) s.player.playVideo(); }); };
+    const pauseAll = () => slots.forEach(s => { if (playing(s)) s.player.pauseVideo(); });
+
+    setInterval(() => {
+      const clock = slots.find(playing);
+      if (!clock || fast || dragging) return;
+      slider.value = clock.part.start + clock.player.getCurrentTime();
+      draw();
+      slots.forEach(s => { if (s !== clock && active(s) && (partAt(s.track) !== s.part || Math.abs(s.part.start + s.player.getCurrentTime() - slider.value) > 2)) seekSlot(s); });
+    }, 250);
+
+    function setSlot(s, track) {
+      s.track = track;
+      s.pick.textContent = track ? track.name : '動画を選択';
+      s.pick.style.cssText = track ? `--色: ${track.color}; --文字色: ${inkOn(track.color)}` : '';
+      s.el.classList.toggle('空', !track);
+      if (!track) { if (s.player && s.player.stopVideo) s.player.stopVideo(); return updateButtons(); }
+      s.part = partAt(track);
+      const at = Math.max(0, Math.floor(+slider.value - s.part.start));
+      if (s.player && s.player.cueVideoById) return s.player.cueVideoById(s.part.video, at);
+      s.player = new YT.Player(s.el.querySelector('.プレーヤー'), {
+        videoId: s.part.video, playerVars: { start: at, playsinline: 1, origin: location.origin },
+        events: { onStateChange: e => { if (e.data === 1 && fast) { resume = true; setFast(false); } else if (e.data === 1) playAll(); if (e.data === 2) pauseAll(); updateButtons(); } },
+      });
+    }
+
+    function tick(ts) {
+      if (!fast && !solo) return ticking = false;
+      if (lastFrame && !dragging) slider.value = Math.min(tMax, +slider.value + (ts - lastFrame) / 1000 * (fast ? PLAY_SPEED : 1));
+      lastFrame = ts; draw();
+      if (+slider.value >= tMax) { solo = false; setFast(false); updateButtons(); return ticking = false; }
+      requestAnimationFrame(tick);
+    }
+    const startClock = () => { lastFrame = 0; if (!ticking) { ticking = true; requestAnimationFrame(tick); } };
+    const playSolo = () => { solo = true; startClock(); };
+
+    function setFast(on) {
+      if (fast === on) return;
+      fast = on;
+      if (on) {
+        resume = videoPlaying() || solo;
+        solo = false;
+        pauseAll();
+        startClock();
+      } else {
+        seekVideo();
+        if (resume) slots.some(active) ? playAll() : playSolo();
+      }
+      updateButtons();
+    }
+
+    playBtn.onclick = () => {
+      if (videoPlaying() || solo) { solo = false; pauseAll(); return updateButtons(); }
+      if (fast) setFast(false);
+      slots.some(active) ? playAll() : playSolo();
+      updateButtons();
+    };
+    fastBtn.onclick = () => setFast(!fast);
+    slider.oninput = () => { draw(); if (fast) return; clearTimeout(seekTimer); seekTimer = setTimeout(seekVideo, 250); };
+    slider.addEventListener('pointerdown', () => dragging = true);
+    slider.onchange = () => { dragging = false; clearTimeout(seekTimer); if (!fast) seekVideo(); };
+
+    const inkOn = hex => {
+      const [r, g, b] = hex.match(/\w\w/g).map(h => parseInt(h, 16));
+      return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? '#333' : '#fff';
+    };
+
+    function jumpTo(track, latlng) {
+      const now = +slider.value;
+      let best = { d: Infinity, t: now };
+      track.segs.forEach(seg => {
+        const a = seg && track.points[seg.index], b = seg && track.points[seg.index + 1];
+        if (!seg || (pathMode !== 'all' && a[0] > now)) return;
+        seg.pts.slice(1).forEach((q, m) => {
+          const p = seg.pts[m], dy = q[0] - p[0], dx = q[1] - p[1], len = dx * dx + dy * dy;
+          const f = len ? Math.max(0, Math.min(1, ((latlng.lng - p[1]) * dx + (latlng.lat - p[0]) * dy) / len)) : 0;
+          const d = Math.hypot(p[1] + dx * f - latlng.lng, p[0] + dy * f - latlng.lat);
+          if (d < best.d) best = { d, t: a[0] + (b[0] - a[0]) * (m + f) / (seg.pts.length - 1) };
+        });
+      });
+      slider.value = pathMode === 'all' ? best.t : Math.min(best.t, now);
+      draw();
+      if (track.video && !slots.some(s => s.track === track)) setSlot(slots[0], track);
+      seekVideo();
+    }
+
+    (async () => {
+      const [event, index] = await Promise.all(['event.json', 'tracks.json'].map(f => fetch(f, { cache: 'no-store' }).then(r => r.ok ? r.json() : {})));
+      document.title = event.title || document.title;
+      MEMBERS = (event.members || []).map(m => ({ ...m, days: index[m.id] || {} }));
+      MEMBERS.forEach(m => (GROUPS[m.group || '市民'] ||= []).push(m.id));
+      GROUP_COLORS = event.groupColors || {};
+      PLACES = event.places || [];
+      DAYS = event.days || [];
+      const MAP = { width: 6144, height: 9216, scale: 0.6818144931769898, x0: 2826.1523153159696, y0: 5735.495139738179, fullZoom: 5, maxNativeZoom: 5 };
+      const f = 2 ** MAP.fullZoom;
+      const crs = L.extend({}, L.CRS.Simple, { transformation: new L.Transformation(MAP.scale / f, MAP.x0 / f, -MAP.scale / f, MAP.y0 / f) });
+      const bounds = L.latLngBounds([MAP.y0 / MAP.scale, -MAP.x0 / MAP.scale], [(MAP.y0 - MAP.height) / MAP.scale, (MAP.width - MAP.x0) / MAP.scale]);
+      map = L.map('地図', { crs, zoomControl: false, attributionControl: false, renderer: L.canvas({ tolerance: 8 }), zoomSnap: 0.25, zoomDelta: 0.5, maxBounds: bounds.pad(0.25) });
+      map.createPane('点').style.zIndex = 450;
+      dots = L.svg({ pane: '点' });
+      L.tileLayer('tiles/{z}/{x}/{y}.jpg', { tileSize: 256, noWrap: true, bounds, minZoom: 0, maxNativeZoom: MAP.maxNativeZoom, maxZoom: MAP.fullZoom + 2 }).addTo(map);
+      map.fitBounds(bounds);
+      map.setMinZoom(map.getZoom() - 1);
+      map.setView([START_VIEW.lat, START_VIEW.lng], START_VIEW.zoom);
+      const dayPick = document.getElementById('日付');
+      map.createPane('施設').style.zIndex = 440;
+      const placeLayer = L.layerGroup(PLACES.map(p => L.marker([p.y, p.x], { pane: '施設', interactive: false, icon: L.divIcon({ className: '施設札', html: `<span>${p.name}</span>` }) })));
+      const placeBtn = document.getElementById('施設名');
+      const showPlaces = () => { saved.noPlaces ? placeLayer.remove() : placeLayer.addTo(map); placeBtn.classList.toggle('非表示', !!saved.noPlaces); };
+      placeBtn.onclick = () => { saved.noPlaces = !saved.noPlaces; save(); showPlaces(); };
+      showPlaces();
+      const pathPick = document.getElementById('経路');
+      pathPick.value = pathMode;
+      pathPick.onchange = () => { pathMode = saved.path = pathPick.value; save(); draw(); };
+      dayPick.innerHTML = DAYS.map((d, i) => `<option value="${i + 1}" ${MEMBERS.some(l => l.days[i + 1]) ? '' : 'disabled'}>${d ? new Date(d + 'T12:00:00+09:00').toLocaleDateString('ja-JP', { timeZone: 'Asia/Tokyo', month: 'numeric', day: 'numeric', weekday: 'short' }) + ' ' : ''}DAY${i + 1}</option>`).join('');
+      dayPick.onchange = () => { saved.day = +dayPick.value; save(); loadDay(saved.day); };
+      dayPick.value = MEMBERS.some(l => l.days[saved.day]) ? saved.day : DAYS.findIndex((_, i) => MEMBERS.some(l => l.days[i + 1])) + 1 || 1;
+      await loadDay(+dayPick.value || 1);
+      const api = document.createElement('script');
+      api.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(api);
+    })();
+
+    async function loadDay(day) {
+      tracks.forEach(t => t.layers.forEach(l => l.remove()));
+      tracks = await Promise.all(MEMBERS.filter(l => l.days[day]).map(async l => {
+        const ds = (await Promise.all([].concat(l.days[day]).map(async f => (await fetch(f)).json()))).sort((a, b) => a.start - b.start);
+        const zero = x => 'offset' in x ? x.start + x.offset : 0;
+        const d = { points: ds.flatMap(x => x.points.map(p => [p[0] + zero(x), ...p.slice(1)])).sort((a, b) => a[0] - b[0]), parts: ds.filter(x => x.video).map(x => ({ video: x.video, start: x.start + (x.offset || 0) })) };
+        const lines = (op, color = l.color, weight = LINE_WIDTH, cap = 'butt') => [
+          L.polyline([], { color, weight, opacity: LINE_OPACITY * op, lineJoin: 'round', lineCap: 'round', smoothFactor: 1.5 }),
+          L.polyline([], { color, weight, opacity: LINE_OPACITY * op, lineJoin: 'round', dashArray: '4 6', lineCap: cap, smoothFactor: 1.5 }),
+        ];
+        const [done, cur, later, curLater] = [1, 1, 0.5, 0.5].map(op => lines(op));
+        const [doneEdge, curEdge, laterEdge, curLaterEdge] = [1, 1, 0.5, 0.5].map(op => lines(op, '#fff', LINE_WIDTH + EDGE_WIDTH * 2, 'round'));
+        const head = L.circleMarker([0, 0], { radius: DOT_RADIUS, color: '#fff', weight: 2, fillColor: l.color, fillOpacity: 1, pane: '点', renderer: dots })
+          .bindTooltip(`<span style="background: ${l.color}; color: ${inkOn(l.color)}">${l.name}</span>`, { permanent: true, direction: 'right', offset: [8, 0], className: '名札' });
+        return { ...l, visible: !(saved.hidden || []).includes(l.id), segs: curveOf(d.points), points: d.points, parts: d.parts, video: d.parts.length > 0, done, cur, later, curLater, doneEdge, curEdge, laterEdge, curLaterEdge, head, layers: [...laterEdge, ...curLaterEdge, ...later, ...curLater, ...doneEdge, ...curEdge, ...done, ...cur, head] };
+      }));
+      tracks.forEach(t => [...t.done, ...t.cur, ...t.later, ...t.curLater].forEach(l => l.on('click', e => jumpTo(t, e.latlng))));
+      tracks.forEach(t => t.head.on('click', () => { if (t.video && !slots.some(s => s.track === t)) setSlot(slots[0], t); seekVideo(); }));
+      const ts = tracks.flatMap(t => [t.points[0][0], t.points[t.points.length - 1][0]]);
+      tMin = Math.min(...ts); tMax = Math.max(...ts);
+      Object.assign(slider, { min: tMin, max: tMax, value: tMin });
+      const jobOf = t => Object.keys(GROUPS).find(j => GROUPS[j].includes(t.id));
+      const members = job => tracks.filter(t => jobOf(t) === job);
+      const jobOn = saved.jobOn = saved.jobOn || {};
+      const refresh = () => {
+        saved.hidden = [...(saved.hidden || []).filter(id => !tracks.some(t => t.id === id)), ...tracks.filter(t => !t.visible).map(t => t.id)];
+        save();
+        tracks.forEach(t => {
+          const job = jobOn[jobOf(t)] && GROUP_COLORS[jobOf(t)];
+          [...t.done, ...t.cur, ...t.later, ...t.curLater].forEach(l => l.setStyle({ color: job || t.color }));
+          t.head.setStyle({ color: job || '#fff' }).setTooltipContent(`<span style="background: ${job || t.color}; color: ${inkOn(job || t.color)}">${t.name}</span>`);
+        });
+        document.querySelectorAll('#凡例 [data-id]').forEach(b => b.classList.toggle('非表示', tracks.some(t => t.id === b.dataset.id && !t.visible)));
+        document.querySelectorAll('#凡例 [data-color]').forEach(b => b.classList.toggle('非表示', !jobOn[b.dataset.color]));
+        document.querySelectorAll('#凡例 [data-all]').forEach(b => b.classList.toggle('非表示', !members(b.dataset.all).every(t => t.visible)));
+        document.querySelector('#凡例 [data-every]').classList.toggle('非表示', !tracks.every(t => t.visible));
+        draw();
+      };
+      const rows = (head, member) => Object.entries(GROUPS).map(([job, ids]) => {
+        const mems = ids.map(id => MEMBERS.find(l => l.id === id));
+        return mems.length ? `<div><div class="職業行">${head(job, mems.some(l => l.days[day]) ? '' : '不参加')}</div><div class="名前欄">${mems.map(member).join('')}</div></div>` : '';
+      }).join('');
+      document.getElementById('凡例').innerHTML = '<div class="職業行"><button class="切替 職業" data-every>全員</button></div>' + rows((job, absent) => `<button class="切替 職業 ${absent}" data-color="${job}">${job}</button><button class="切替 職業 ${absent}" data-all="${job}">全員</button>`,
+        l => `<button data-id="${l.id}" class="切替 ${l.days[day] ? '' : '不参加'}" style="--色: ${l.color}; --文字色: ${inkOn(l.color)}">${l.name}</button>`);
+      document.querySelectorAll('#凡例 [data-id]').forEach(b => b.onclick = () => { const t = tracks.find(t => t.id === b.dataset.id); if (t) { t.visible = !t.visible; refresh(); } });
+      document.querySelector('#凡例 [data-every]').onclick = () => { const on = !tracks.every(t => t.visible); tracks.forEach(t => t.visible = on); refresh(); };
+      document.querySelectorAll('#凡例 [data-all]').forEach(b => b.onclick = () => { const ts = members(b.dataset.all), on = !ts.every(t => t.visible); ts.forEach(t => t.visible = on); refresh(); });
+      document.querySelectorAll('#凡例 [data-color]').forEach(b => b.onclick = () => { jobOn[b.dataset.color] = !jobOn[b.dataset.color]; refresh(); });
+      refresh();
+      slots.forEach(s => {
+        s.list.innerHTML = '<div class="職業行"><button class="切替 職業" data-pick="-1">なし</button></div>' + rows((job, absent) => `<span class="切替 職業 ${absent}">${job}</span>`, l => {
+          const i = tracks.findIndex(t => t.id === l.id && t.video);
+          return `<button data-pick="${i}" class="切替 ${i < 0 ? '不参加' : ''}" ${i < 0 ? 'disabled' : ''} style="--色: ${l.color}; --文字色: ${inkOn(l.color)}">${l.name}</button>`;
+        });
+        s.list.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { setSlot(s, tracks[b.dataset.pick]); s.list.hidden = true; });
+        const same = s.track && tracks.find(t => t.id === s.track.id && t.video);
+        s.track ? setSlot(s, same) : s.el.classList.add('空');
+      });
+      draw();
+    }
+  </script>
+</body>
+
+</html>

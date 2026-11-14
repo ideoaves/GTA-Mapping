@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="ja">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>GTAMapping 経路編集</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@100..700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --背景: #eee;
+      --パネル: #333;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--背景);
+      font-family: "IBM Plex Sans JP", sans-serif;
+      font-size: 10px;
+      overflow: hidden;
+    }
+
+    #地図 {
+      width: 100vw;
+      height: 100dvh;
+      background: var(--背景);
+      outline: none;
+      cursor: crosshair;
+    }
+
+    #地図 .leaflet-tile {
+      filter: grayscale(1) brightness(0.93);
+    }
+
+    .leaflet-tile-pane {
+      opacity: 0.4;
+    }
+
+    #描画 {
+      position: absolute;
+      inset: 0;
+      z-index: 500;
+      pointer-events: none;
+    }
+
+    .操作欄 {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1000;
+      max-width: min(560px, calc(100vw - 20px));
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      background: var(--パネル);
+      color: #fff;
+      padding: 8px 10px;
+    }
+
+    .行 {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+    }
+
+    button,
+    select {
+      font: inherit;
+      border: 0;
+      padding: 2px 6px;
+      cursor: pointer;
+    }
+
+    .名前 {
+      background: var(--色);
+      color: var(--文字色);
+    }
+
+    .名前.非表示 {
+      opacity: 0.3;
+    }
+
+    #保存.未保存 {
+      background: #f33;
+      color: #fff;
+    }
+
+    #施設.選択中 {
+      background: #ff0;
+    }
+
+    .動画欄 {
+      position: absolute;
+      right: 10px;
+      top: 10px;
+      z-index: 1000;
+      width: min(640px, calc(100vw - 20px));
+      aspect-ratio: 16 / 9;
+      background: #000;
+    }
+
+    .動画欄 > * {
+      width: 100%;
+      height: 100%;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="地図"></div>
+  <div class="操作欄">
+    <div class="行">
+      <select id="日付"></select>
+      <button id="保存">保存</button>
+      <button id="施設">施設</button>
+      <span id="状態"></span>
+    </div>
+    <div class="行" id="一覧"></div>
+    <div id="説明"></div>
+    <div class="行" id="自動調整"><button id="微調整">微調整</button><span>線をダブルクリックで赤くし、ボタンを押すと自動調整もできます。</span></div>
+  </div>
+  <div class="動画欄"><div id="動画"></div></div>
+  <script>
+    const DOT_R = 2.5;
+    const LINE_WIDTH = 1.2;
+    const EDGE_WIDTH = 1.5;
+    const HIT_PX = 7;
+    const GAP_SECONDS = 300;
+    const GRID_SEC = 2;
+    const PLACE_FONT = '600 12px "IBM Plex Sans JP", sans-serif';
+    const HELP = {
+      track: '微調整用です。これで治らなそうならマッピング側を調整すべきです。<br>クリック: 点を足す　　右クリック: その場面を再生　　Delete: 選んだ点と両側の線を削除',
+      place: '施設の編集です。<br>クリック: 施設を足す　　施設をクリック: 名前を変える　　施設を右クリック: 消す'
+    };
+
+    const MAP = { width: 6144, height: 9216, scale: 0.6818144931769898, x0: 2826.1523153159696, y0: 5735.495139738179, fullZoom: 5, maxNativeZoom: 5 };
+
+    const f = 2 ** MAP.fullZoom;
+    const crs = L.extend({}, L.CRS.Simple, { transformation: new L.Transformation(MAP.scale / f, MAP.x0 / f, -MAP.scale / f, MAP.y0 / f) });
+    const bounds = L.latLngBounds([MAP.y0 / MAP.scale, -MAP.x0 / MAP.scale], [(MAP.y0 - MAP.height) / MAP.scale, (MAP.width - MAP.x0) / MAP.scale]);
+    const map = L.map('地図', { crs, zoomControl: false, attributionControl: false, zoomSnap: 0.25, zoomDelta: 0.5, maxBounds: bounds.pad(0.25), dragging: false, boxZoom: false, doubleClickZoom: false, zoomAnimation: false });
+    L.tileLayer('../site/tiles/{z}/{x}/{y}.jpg', { tileSize: 256, noWrap: true, bounds, minZoom: 0, maxNativeZoom: MAP.maxNativeZoom, maxZoom: MAP.fullZoom + 3 }).addTo(map);
+    map.fitBounds(bounds);
+    map.setMinZoom(map.getZoom() - 1);
+
+    const canvas = document.createElement('canvas');
+    canvas.id = '描画';
+    map.getContainer().appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+
+    let DAYS = [], members = [], order = [], tracks = [], shownIds = new Set(), current = null, player = null, dirHandle = null, drag = null, screen = [];
+    let eventData = {}, placeMode = false, placesDirty = false, placeScreen = [];
+    const visible = () => tracks.filter(t => shownIds.has(t.member));
+    const inkOn = hex => { const [r, g, b] = hex.match(/\w\w/g).map(h => parseInt(h, 16)); return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? '#333' : '#fff'; };
+
+    const zero = d => 'offset' in d ? d.start + d.offset : 0;
+    const cut = (t, i) => t.points[i][0] - t.points[i - 1][0] > GAP_SECONDS || t.points[i][6];
+
+    function draw() {
+      const size = map.getSize(), dpr = devicePixelRatio || 1;
+      if (canvas.width !== size.x * dpr || canvas.height !== size.y * dpr) Object.assign(canvas, { width: size.x * dpr, height: size.y * dpr }), Object.assign(canvas.style, { width: `${size.x}px`, height: `${size.y}px` });
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, size.x, size.y);
+      screen = [];
+      for (const t of visible()) {
+        const xy = t.xy = t.points.map(p => map.latLngToContainerPoint([p[2], p[1]]));
+        ctx.beginPath();
+        xy.forEach((q, i) => i && !cut(t, i) ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y));
+        Object.assign(ctx, { strokeStyle: '#fff', lineWidth: LINE_WIDTH + EDGE_WIDTH * 2, lineJoin: 'round', lineCap: 'round' });
+        ctx.stroke();
+        Object.assign(ctx, { strokeStyle: '#000', lineWidth: LINE_WIDTH });
+        ctx.stroke();
+        ctx.beginPath();
+        xy.forEach((q, i) => { if (i && !cut(t, i) && (t.points[i][4] === 'f' || t.points[i - 1][4] === 'f')) ctx.moveTo(xy[i - 1].x, xy[i - 1].y), ctx.lineTo(q.x, q.y); });
+        Object.assign(ctx, { strokeStyle: '#f00', lineWidth: LINE_WIDTH + 1 });
+        ctx.stroke();
+        xy.forEach((q, i) => {
+          if (q.x < -10 || q.y < -10 || q.x > size.x + 10 || q.y > size.y + 10) return;
+          const on = t.sel.has(i);
+          screen.push([t, i, q.x, q.y]);
+          if (!on && t.points[i][4] === 'f') return;
+          ctx.beginPath();
+          ctx.arc(q.x, q.y, on ? DOT_R + 1.5 : DOT_R, 0, Math.PI * 2);
+          ctx.fillStyle = on ? '#ff0' : '#000';
+          ctx.fill();
+          if (on) { ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.stroke(); }
+        });
+      }
+      if (drag && drag.kind === 'box') {
+        ctx.strokeStyle = '#000';
+        ctx.setLineDash([4, 3]);
+        ctx.strokeRect(drag.x0, drag.y0, drag.x - drag.x0, drag.y - drag.y0);
+        ctx.setLineDash([]);
+      }
+      placeScreen = [];
+      if (placeMode) for (const p of eventData.places) {
+        const q = map.latLngToContainerPoint([p.y, p.x]);
+        Object.assign(ctx, { font: PLACE_FONT, textBaseline: 'middle', lineJoin: 'round', lineWidth: 3, strokeStyle: '#fff', fillStyle: '#000' });
+        ctx.beginPath();
+        ctx.arc(q.x, q.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeText(p.name, q.x + 7, q.y);
+        ctx.fillText(p.name, q.x + 7, q.y);
+        placeScreen.push([p, q.x, q.y, ctx.measureText(p.name).width + 7]);
+      }
+      const dirty = tracks.filter(t => t.dirty).length, sel = tracks.reduce((n, t) => n + t.sel.size, 0);
+      document.getElementById('状態').textContent = `選択 ${sel}点` + (dirty ? ` ／ 未保存 ${dirty}本` : '') + (placesDirty ? ' ／ 施設が未保存' : '');
+      document.getElementById('保存').classList.toggle('未保存', dirty > 0 || placesDirty);
+      document.getElementById('説明').innerHTML = HELP[placeMode ? 'place' : 'track'];
+      document.getElementById('自動調整').style.display = placeMode ? 'none' : '';
+    }
+    map.on('move zoom resize', draw);
+
+    const placeHit = (x, y) => placeScreen.find(([, px, py, w]) => Math.hypot(px - x, py - y) <= HIT_PX || (x >= px && x <= px + w && Math.abs(y - py) <= 8));
+    const hit = (x, y) => screen.reduce((best, [t, i, sx, sy]) => { const d = Math.hypot(sx - x, sy - y); return d <= HIT_PX && (!best || d < best.d) ? { d, t, i } : best; }, null);
+
+    function lineAt(x, y) {
+      let best = null;
+      for (const t of visible()) t.xy.forEach((b, i) => {
+        if (!i || cut(t, i)) return;
+        const a = t.xy[i - 1], dx = b.x - a.x, dy = b.y - a.y, len = dx * dx + dy * dy;
+        const f = len ? Math.max(0, Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / len)) : 0, d = Math.hypot(a.x + dx * f - x, a.y + dy * f - y);
+        if (d <= HIT_PX && (!best || d < best.d)) best = { d, t, i, f };
+      });
+      if (!best) return null;
+      const a = best.t.points[best.i - 1], b = best.t.points[best.i], time = a[0] + GRID_SEC * Math.round((b[0] - a[0]) * best.f / GRID_SEC);
+      return { ...best, time, inside: time > a[0] && time < b[0] };
+    }
+
+    let undo = [], redo = [], before = null;
+    const snap = () => ({ refs: tracks.slice(), text: JSON.stringify([tracks.map(t => [t.points, t.src]), eventData.places]) });
+    const begin = () => before = snap();
+    const commit = () => { if (before && snap().text !== before.text) undo.push(before), redo = []; before = null; };
+
+    // 履歴の一方から状態を取り出して戻し、今の状態をもう一方へ積む
+    function restore(from, to) {
+      const s = from.pop();
+      if (!s) return;
+      to.push(snap());
+      const [ts, places] = JSON.parse(s.text);
+      s.refs.forEach((t, k) => { Object.assign(t, { points: ts[k][0], src: ts[k][1], dirty: true }); t.sel.clear(); });
+      if (JSON.stringify(places) !== JSON.stringify(eventData.places)) Object.assign(eventData, { places }), placesDirty = true;
+      draw();
+    }
+
+    window.addEventListener('keydown', e => {
+      const k = e.key.toLowerCase();
+      if (e.ctrlKey && (k === 'z' || k === 'y')) return e.preventDefault(), k === 'z' && !e.shiftKey ? restore(undo, redo) : restore(redo, undo);
+      if ((e.key !== 'Delete' && e.key !== 'Backspace') || e.target.closest('select')) return;
+      e.preventDefault();
+      begin();
+      for (const t of visible().filter(t => t.sel.size)) {
+        const points = [], src = [];
+        let gone = false;
+        t.points.forEach((p, i) => {
+          if (t.sel.has(i)) return gone = true;
+          points.push(gone && points.length ? [...p.slice(0, 6), 1] : p);
+          src.push(t.src[i]);
+          gone = false;
+        });
+        Object.assign(t, { points, src, dirty: true });
+        t.sel.clear();
+      }
+      commit();
+      draw();
+    });
+
+    function showVideo(t, time, play) {
+      current = t;
+      if (!window.YT || !YT.Player || !t.parts.length) return;
+      const part = t.parts.filter(p => p.start <= time).pop() || t.parts[0], at = Math.max(0, Math.floor(time - part.start));
+      if (!player) return player = new YT.Player('動画', { videoId: part.video, playerVars: { start: at, autoplay: play ? 1 : 0, playsinline: 1, origin: location.origin } });
+      if (!player.cueVideoById) return;
+      play ? player.loadVideoById(part.video, at) : player.cueVideoById(part.video, at);
+    }
+
+    const box = map.getContainer();
+    box.addEventListener('contextmenu', e => e.preventDefault());
+    // 手で足した点をダブルクリックすると、微調整の目印の赤い点と切り替える
+    box.addEventListener('dblclick', e => {
+      if (placeMode) return;
+      const r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, l = lineAt(x, y);
+      const h = hit(x, y) || (l && { t: l.t, i: 'mf'.includes(l.t.points[l.i][4]) ? l.i : l.i - 1 }), p = h && h.t.points[h.i];
+      if (!p || !'mf'.includes(p[4])) return;
+      begin();
+      p[4] = p[4] === 'f' ? 'm' : 'f';
+      h.t.dirty = true;
+      commit();
+      draw();
+    });
+    box.addEventListener('mousedown', e => {
+      const r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+      begin();
+      if (e.button === 2) return drag = { kind: 'pan', px: e.clientX, py: e.clientY, x, y, moved: 0 };
+      if (e.button !== 0) return;
+      if (placeMode) {
+        const ph = placeHit(x, y);
+        return drag = ph ? { kind: 'place', p: ph[0], start: map.containerPointToLatLng([x, y]), ox: ph[0].x, oy: ph[0].y, moved: false } : { kind: 'newplace', x, y };
+      }
+      const h = hit(x, y);
+      if (h) {
+        if (!h.t.sel.has(h.i)) { if (!e.shiftKey) tracks.forEach(t => t.sel.clear()); h.t.sel.add(h.i); }
+        const start = map.containerPointToLatLng([x, y]);
+        drag = { kind: 'move', start, moved: false, h, orig: visible().flatMap(t => [...t.sel].map(i => [t, i, t.points[i][1], t.points[i][2]])) };
+      } else {
+        drag = { kind: 'box', x0: x, y0: y, x, y, add: e.shiftKey, line: lineAt(x, y) };
+      }
+      draw();
+    });
+    window.addEventListener('mousemove', e => {
+      if (!drag) return;
+      const r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+      if (drag.kind === 'pan') { drag.moved += Math.abs(drag.px - e.clientX) + Math.abs(drag.py - e.clientY); map.panBy([drag.px - e.clientX, drag.py - e.clientY], { animate: false }); drag.px = e.clientX; drag.py = e.clientY; return; }
+      if (drag.kind === 'box') { Object.assign(drag, { x, y }); return draw(); }
+      if (drag.kind === 'newplace') return;
+      const now = map.containerPointToLatLng([x, y]), dx = now.lng - drag.start.lng, dy = now.lat - drag.start.lat;
+      if (drag.kind === 'place') { Object.assign(drag.p, { x: Math.round(drag.ox + dx), y: Math.round(drag.oy + dy) }); drag.moved = placesDirty = true; return draw(); }
+      drag.moved = true;
+      drag.orig.forEach(([t, i, px, py]) => { t.points[i][1] = Math.round((px + dx) * 10) / 10; t.points[i][2] = Math.round((py + dy) * 10) / 10; t.dirty = true; });
+      draw();
+    });
+    window.addEventListener('mouseup', () => {
+      if (!drag) return;
+      const ph = drag.kind === 'pan' && drag.moved < 3 && placeMode && placeHit(drag.x, drag.y);
+      if (ph) {
+        eventData.places.splice(eventData.places.indexOf(ph[0]), 1);
+        placesDirty = true;
+      } else if (drag.kind === 'place' && !drag.moved) {
+        const name = prompt('施設の名前（空にすると消す）', drag.p.name);
+        if (name === '') eventData.places.splice(eventData.places.indexOf(drag.p), 1);
+        if (name !== null) { if (name) drag.p.name = name; placesDirty = true; }
+      } else if (drag.kind === 'newplace') {
+        const name = prompt('施設の名前'), at = map.containerPointToLatLng([drag.x, drag.y]);
+        if (name) { eventData.places.push({ name, x: Math.round(at.lng), y: Math.round(at.lat) }); placesDirty = true; }
+      } else if (drag.kind === 'pan' && drag.moved < 3 && !placeMode) {
+        const h = hit(drag.x, drag.y), l = !h && lineAt(drag.x, drag.y);
+        if (h) showVideo(h.t, h.t.points[h.i][0], true);
+        else if (l) showVideo(l.t, l.time, true);
+      }
+      if (drag.kind === 'box' && drag.line && Math.abs(drag.x - drag.x0) + Math.abs(drag.y - drag.y0) < 3) {
+        const { t, i, time, inside } = drag.line, a = t.points[i - 1], b = t.points[i], k = (time - a[0]) / (b[0] - a[0]);
+        if (inside) {
+          t.points.splice(i, 0, [time, Math.round((a[1] + (b[1] - a[1]) * k) * 10) / 10, Math.round((a[2] + (b[2] - a[2]) * k) * 10) / 10, 0, 'm', a[5]]);
+          t.src.splice(i, 0, t.src[i - 1]);
+          tracks.forEach(u => u.sel.clear());
+          t.sel.add(i);
+          t.dirty = true;
+        }
+      } else if (drag.kind === 'box') {
+        const [x0, x1] = [drag.x0, drag.x].sort((a, b) => a - b), [y0, y1] = [drag.y0, drag.y].sort((a, b) => a - b);
+        if (!drag.add) tracks.forEach(t => t.sel.clear());
+        screen.forEach(([t, i, x, y]) => { if (x >= x0 && x <= x1 && y >= y0 && y <= y1) t.sel.add(i); });
+      }
+      commit();
+      drag = null;
+      draw();
+    });
+
+    // メンバーのその日の経路ファイルを読み、編集用にひとつの点列へまとめる
+    async function readTrack(m, files) {
+      const data = await Promise.all(files.map(async f => (await fetch(`../site/${f}`, { cache: 'no-store' })).json()));
+      const pts = data.flatMap((d, k) => d.points.map(p => ({ p: [p[0] + zero(d), ...p.slice(1)], k }))).sort((a, b) => a.p[0] - b.p[0]);
+      return { member: m.id, color: m.color, files, heads: data.map(({ points, ...h }) => h), points: pts.map(x => x.p), src: pts.map(x => x.k), parts: data.filter(d => d.video).map(d => ({ video: d.video, start: d.start + (d.offset || 0) })).sort((a, b) => a.start - b.start), sel: new Set(), dirty: false };
+    }
+
+    async function loadDay(day) {
+      if (tracks.some(t => t.dirty) && !confirm('保存していない変更があります。破棄して日付を変えますか？')) return false;
+      tracks = [];
+      undo = [], redo = [];
+      shownIds = new Set();
+      const made = name => order.indexOf([].concat(name)[0].split('/').pop().replace('.json', ''));
+      const here = members.filter(m => m.days[day]).sort((a, b) => made(a.days[day]) - made(b.days[day]));
+      document.getElementById('一覧').innerHTML = here.map(m => `<button class="名前 非表示" data-id="${m.id}" style="--色: ${m.color}; --文字色: ${inkOn(m.color)}">${m.name}</button>`).join('');
+      document.querySelectorAll('#一覧 [data-id]').forEach(b => b.onclick = async () => {
+        const m = here.find(m => m.id === b.dataset.id), on = !shownIds.has(m.id);
+        if (on) {
+          shownIds.add(m.id);
+          if (!tracks.some(t => t.member === m.id)) tracks.push(await readTrack(m, [].concat(m.days[day])));
+          const t = tracks.find(t => t.member === m.id);
+          showVideo(t, t.points[0][0]);
+        } else {
+          shownIds.delete(m.id);
+          tracks.filter(t => t.member === m.id).forEach(t => t.sel.clear());
+        }
+        b.classList.toggle('非表示', !on);
+        draw();
+      });
+      draw();
+      return true;
+    }
+
+    // 変更した経路と施設を site フォルダへ書き出す
+    async function save() {
+      const dirty = tracks.filter(t => t.dirty);
+      if (!dirty.length && !placesDirty) return true;
+      const outs = dirty.flatMap(t => t.files.map((f, k) => [f, JSON.stringify({ ...t.heads[k], points: t.points.filter((_, i) => t.src[i] === k).map(p => [p[0] - zero(t.heads[k]), ...p.slice(1)]) })]));
+      if (placesDirty) outs.push(['event.json', JSON.stringify(eventData, null, 1).replace(/\{\n\s+([^{}\[\]]*?)\n\s+\}/g, (_, s) => `{${s.replace(/,\n\s+/g, ', ')}}`) + '\n']);
+      if (window.showDirectoryPicker) {
+        if (!dirHandle) {
+          dirHandle = await showDirectoryPicker({ mode: 'readwrite' });
+          if (dirHandle.name !== 'site' && !confirm(`「${dirHandle.name}」に保存します。site フォルダで合っていますか？`)) return dirHandle = false;
+        }
+        for (const [path, text] of outs) {
+          const parts = path.split('/'), dir = parts.length > 1 ? await dirHandle.getDirectoryHandle(parts[0]) : dirHandle;
+          const w = await (await dir.getFileHandle(parts.pop(), { create: true })).createWritable();
+          await w.write(text);
+          await w.close();
+        }
+      } else {
+        outs.forEach(([path, text]) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'application/json' })); a.download = path.split('/').pop(); a.click(); });
+      }
+      dirty.forEach(t => t.dirty = false);
+      placesDirty = false;
+      draw();
+      return true;
+    }
+    document.getElementById('保存').onclick = save;
+
+    // 赤い点のある経路を保存してから edit.py に fine-tune.py を回してもらい、結果を読み直す
+    document.getElementById('微調整').onclick = async e => {
+      const targets = tracks.filter(t => t.points.some(p => p[4] === 'f'));
+      if (!targets.length) return alert('赤い点がありません。手で足した点をダブルクリックすると赤くなります。');
+      if (!window.showDirectoryPicker) return alert('このブラウザでは site フォルダへ直接保存できないので、微調整は使えません。');
+      if (!await save()) return;
+      const names = targets.flatMap(t => t.files.filter((_, k) => t.points.some((p, i) => p[4] === 'f' && t.src[i] === k)).map(f => f.split('/').pop().replace('.json', '')));
+      e.target.disabled = true;
+      e.target.textContent = `微調整中（${names.join('・')}）…`;
+      try {
+        const res = await fetch('fine-tune', { method: 'POST', body: JSON.stringify(names) });
+        if (!res.ok) throw new Error(res.status === 501 ? 'edit.py でページを開いてください' : await res.text());
+        const log = await res.text();
+        for (const t of targets) {
+          const fresh = await readTrack({ id: t.member, color: t.color }, t.files);
+          tracks[tracks.indexOf(t)] = fresh;
+          if (current === t) current = fresh;
+        }
+        undo = [], redo = [];
+        draw();
+        alert(log);
+      } catch (err) {
+        alert(`微調整できませんでした: ${err.message}`);
+      }
+      e.target.disabled = false;
+      e.target.textContent = '微調整';
+    };
+
+    window.addEventListener('beforeunload', e => { if (placesDirty || tracks.some(t => t.dirty)) e.preventDefault(); });
+    document.getElementById('施設').onclick = e => { placeMode = !placeMode; e.target.classList.toggle('選択中', placeMode); draw(); };
+
+    (async () => {
+      const [event, index] = await Promise.all(['event.json', 'tracks.json'].map(f => fetch(`../site/${f}`, { cache: 'no-store' }).then(r => r.ok ? r.json() : {})));
+      eventData = { places: [], ...event };
+      DAYS = event.days;
+      order = Object.keys(await fetch('../data/targets.json', { cache: 'no-store' }).then(r => r.ok ? r.json() : {}));
+      members = event.members.map(m => ({ ...m, days: index[m.id] || {} }));
+      const dayPick = document.getElementById('日付');
+      dayPick.innerHTML = DAYS.map((d, i) => `<option value="${i + 1}" ${members.some(m => m.days[i + 1]) ? '' : 'disabled'}>DAY${i + 1}（${d.slice(5)}）</option>`).join('');
+      let shownDay = DAYS.findIndex((_, i) => members.some(m => m.days[i + 1])) + 1 || 1;
+      dayPick.onchange = async () => { if (await loadDay(+dayPick.value)) shownDay = +dayPick.value; else dayPick.value = shownDay; };
+      dayPick.value = shownDay;
+      await loadDay(shownDay);
+      window.onYouTubeIframeAPIReady = () => current && showVideo(current, current.points[0][0]);
+      const api = document.createElement('script');
+      api.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(api);
+    })();
+  </script>
+</body>
+
+</html>
