@@ -489,6 +489,7 @@ def main(arg, force):
 
 if __name__ == '__main__':
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
+    os.makedirs('video', exist_ok=True)
     os.makedirs('probes', exist_ok=True)
     os.makedirs('site/tracks', exist_ok=True)
     words = [a for a in sys.argv[1:] if not a.startswith('--')]

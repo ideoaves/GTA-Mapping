@@ -1,6 +1,5 @@
 __pycache__/
-video/*
-!video/.gitkeep
+video/
 probes/
 data/targets.json
 site/tracks/
