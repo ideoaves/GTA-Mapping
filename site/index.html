@@ -8,6 +8,7 @@
   <title>GTAマップ</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://player.twitch.tv/js/embed/v1.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@100..700&display=swap" rel="stylesheet">
@@ -540,6 +541,43 @@
       slots.forEach(s => { if (s !== clock && active(s) && (partAt(s.track) !== s.part || Math.abs(s.part.start + s.player.getCurrentTime() - slider.value) > 2)) seekSlot(s); });
     }, 250);
 
+    // YouTube と Twitch（video が twitch: で始まる）を YT.Player と同じ呼び方で切り替えて再生する
+    function makePlayer(el, onState = () => { }) {
+      const [ytBox, twBox] = [0, 1].map(() => el.appendChild(document.createElement('div')));
+      const ytSpot = ytBox.appendChild(document.createElement('div'));
+      let y = null, t = null, kind = 'yt', twState = -1, twVid = '', twSeek = null;
+      const tw = () => kind === 'tw';
+      const use = (video, at, play) => {
+        kind = video.startsWith('twitch:') ? 'tw' : 'yt';
+        ytBox.hidden = tw();
+        twBox.hidden = !tw();
+        if (!tw()) {
+          if (t) t.pause();
+          if (!y) y = new YT.Player(ytSpot, { videoId: video, playerVars: { start: at, autoplay: play ? 1 : 0, playsinline: 1, origin: location.origin }, events: { onStateChange: e => !tw() && onState(e) } });
+          else if (y.cueVideoById) play ? y.loadVideoById(video, at) : y.cueVideoById(video, at);
+          return;
+        }
+        if (y && y.pauseVideo) y.pauseVideo();
+        twState = play ? 1 : 5;
+        twSeek = at;
+        if (t && twVid === video) { t.seek(at); twSeek = null; return play ? t.play() : t.pause(); }
+        twVid = video;
+        if (t) { t.setVideo(video.slice(7), at); return play ? t.play() : t.pause(); }
+        t = new Twitch.Player(twBox, { video: video.slice(7), time: `${Math.floor(at / 3600)}h${Math.floor(at % 3600 / 60)}m${Math.floor(at % 60)}s`, autoplay: play, parent: [location.hostname], width: '100%', height: '100%' });
+        [[Twitch.Player.PLAY, 1], [Twitch.Player.PAUSE, 2], [Twitch.Player.ENDED, 0]].forEach(([ev, s]) => t.addEventListener(ev, () => { twState = s; if (s === 1 && twSeek !== null) { t.seek(twSeek); twSeek = null; } if (tw()) onState({ data: s }); }));
+      };
+      return {
+        loadVideoById: (v, at) => use(v, at, true),
+        cueVideoById: (v, at) => use(v, at, false),
+        getPlayerState: () => tw() ? twState : y && y.getPlayerState ? y.getPlayerState() : -1,
+        getCurrentTime: () => tw() ? t.getCurrentTime() : y.getCurrentTime(),
+        seekTo: at => tw() ? t.seek(at) : y.seekTo(at, true),
+        playVideo: () => tw() ? t.play() : y.playVideo(),
+        pauseVideo: () => tw() ? t.pause() : y.pauseVideo(),
+        stopVideo: () => tw() ? t.pause() : y && y.stopVideo && y.stopVideo(),
+      };
+    }
+
     function setSlot(s, track) {
       s.track = track;
       s.pick.textContent = track ? track.name : '動画を選択';
@@ -548,11 +586,8 @@
       if (!track) { if (s.player && s.player.stopVideo) s.player.stopVideo(); return updateButtons(); }
       s.part = partAt(track);
       const at = Math.max(0, Math.floor(+slider.value - s.part.start));
-      if (s.player && s.player.cueVideoById) return s.player.cueVideoById(s.part.video, at);
-      s.player = new YT.Player(s.el.querySelector('.プレーヤー'), {
-        videoId: s.part.video, playerVars: { start: at, playsinline: 1, origin: location.origin },
-        events: { onStateChange: e => { if (e.data === 1 && fast) { resume = true; setFast(false); } else if (e.data === 1) playAll(); if (e.data === 2) pauseAll(); updateButtons(); } },
-      });
+      s.player = s.player || makePlayer(s.el.querySelector('.プレーヤー'), e => { if (e.data === 1 && fast) { resume = true; setFast(false); } else if (e.data === 1) playAll(); if (e.data === 2) pauseAll(); updateButtons(); });
+      s.player.cueVideoById(s.part.video, at);
     }
 
     function tick(ts) {
@@ -621,7 +656,7 @@
       MEMBERS = (event.members || []).map(m => ({ ...m, days: index[m.id] || {} }));
       MEMBERS.forEach(m => (GROUPS[m.group || '市民'] ||= []).push(m.id));
       GROUP_COLORS = event.groupColors || {};
-      PLACES = event.places || [];
+      PLACES = (event.places || []).filter(p => p.name !== 'warp');
       DAYS = event.days || [];
       const MAP = { width: 6144, height: 9216, scale: 0.6818144931769898, x0: 2826.1523153159696, y0: 5735.495139738179, fullZoom: 5, maxNativeZoom: 5 };
       const f = 2 ** MAP.fullZoom;

@@ -374,7 +374,9 @@ def select_track(cands, window=150):
 
 
 def warp(pts):
-    near = lambda p: any(math.hypot(p[1] - x, p[2] - y) < 100 for x, y in WARP_SPOTS)
+    places = json.load(open('site/event.json', encoding='utf-8')).get('places', []) if os.path.exists('site/event.json') else []
+    spots = WARP_SPOTS + [(p['x'], p['y']) for p in places if p['name'] == 'warp']
+    near = lambda p: any(math.hypot(p[1] - x, p[2] - y) < 100 for x, y in spots)
     return [p + [1] if len(p) == 6 and i and near(p) and math.hypot(p[1] - pts[i - 1][1], p[2] - pts[i - 1][2]) > WARP_M else p for i, p in enumerate(pts)]
 
 
@@ -444,7 +446,8 @@ def pending(arg, failed, finished):
         if name in targets or not wanted(name):
             continue
         info = json.load(open(f'video/{name}.info.json', encoding='utf-8')) if os.path.exists(f'video/{name}.info.json') else {}
-        target = {'member': re.sub(r'\d+$', '', name.rsplit('_day', 1)[0]), 'video_id': info.get('id', ''), 'start': info.get('release_timestamp') or info.get('timestamp')}
+        tw = info.get('extractor_key', '').startswith('Twitch')
+        target = {'member': re.sub(r'\d+$', '', name.rsplit('_day', 1)[0]), 'video_id': 'twitch:' + info['id'].lstrip('v') if tw else info.get('id', ''), 'start': None if tw else info.get('release_timestamp') or info.get('timestamp')}
         target['start'] = target['start'] or Stream(name, target).guess_start()
         if not target['start']:
             failed.append(name)
@@ -452,7 +455,7 @@ def pending(arg, failed, finished):
             continue
         targets[name] = target
         json.dump(targets, open(TARGETS, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-        log(f'{name} を登録 {datetime.fromtimestamp(target["start"], timezone(timedelta(hours=9))):%Y-%m-%d %H:%M:%S} 開始' + ('' if info else '（時計から逆算）'))
+        log(f'{name} を登録 {datetime.fromtimestamp(target["start"], timezone(timedelta(hours=9))):%Y-%m-%d %H:%M:%S} 開始' + ('' if info and not tw else '（時計から逆算）'))
     return targets, [n for n in targets if wanted(n) and os.path.exists(f'video/{n}.mp4')]
 
 
@@ -543,7 +546,11 @@ def main(arg, force):
     old = json.load(open('probes/progress.json', encoding='utf-8')) if os.path.exists('probes/progress.json') else {'start': time.time(), 'streams': {}}
     state = {'start': old['start'], 'streams': {**old['streams'], **{n: {'status': '待ち'} for n in names}}}
     while names:
-        (finished if analyze(names[0], targets[names[0]], state, force) else failed).append(names[0])
+        try:
+            ok = analyze(names[0], targets[names[0]], state, force)
+        except ValueError:
+            ok = log(f'{names[0]} 動画が途中で壊れていて読めないよ（取り直してね）')
+        (finished if ok else failed).append(names[0])
         targets, names = pending(arg, failed, finished)
         for n in names:
             if state['streams'].get(n, {}).get('status') != '待ち':

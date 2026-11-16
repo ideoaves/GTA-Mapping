@@ -17,6 +17,8 @@ python -m yt_dlp --write-info-json -o "video/メンバーのid_day日.mp4" "http
 
 `video/miko_day3.mp4` のように、`{メンバーのid}_day{日}.mp4` の名前で保存します。同日に2つある場合は `miko2_day3.mp4` とします。
 
+Twitch のアーカイブも同じ方法で落とせば、地図からTwitchの動画として再生できます。開始時刻は画面上部の日時から逆算します。
+
 ## 2. gtamapping.py を動かす
 `gtamapping.py` のダブルクリックで動画を全部解析します。
 
@@ -61,6 +63,8 @@ python -m yt_dlp --write-info-json -o "video/メンバーのid_day日.mp4" "http
 
 施設モードでは、地図に出す施設を置けます。
 
+サーバー独自のワープ先（スタック救済コマンドの移動先など）があれば、そこに `warp` という名前で施設を置いてください。遠くからそこへ飛んだときに経路の線を切ります(gtamapping.pyを再実行することで反映されます)。
+
 ## 5. 公開
 site/の中身が実際のMAPサイトです。これを公開すれば完成です。
 
@@ -80,6 +84,7 @@ site/の中身が実際のMAPサイトです。これを公開すれば完成で
 
 - 地図（`data/map.jpg`、`site/tiles/`）: [Postal Code Map & Minimap v1.3](https://forum.cfx.re/t/release-postal-code-map-minimap-new-improved-v1-3/147458) by Virus_City
 - `data/hud.png`、`data/speedo.png`: 音乃瀬奏「[【 #holoGTA 】権力。【音乃瀬奏】#hololiveDEV_IS #ReGLOSS](https://www.youtube.com/watch?v=KkdbflZg_Yo)」の配信画面
+- 開発・テストに使った配信: [Video_credit.md](Video_credit.md)
 - 着想: [にじGTAライバーMAP](https://ide-an.github.io/nijigta-livers-map/)（[技術的な話](https://github.com/ide-an/nijigta-livers-map/blob/main/doc/technical_detail.md)）
 - 地図の表示: [Leaflet](https://leafletjs.com/) 1.9.4（BSD-2-Clause）
 - 文字認識: [EasyOCR](https://github.com/JaidedAI/EasyOCR)（Apache-2.0）

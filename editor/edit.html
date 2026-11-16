@@ -8,6 +8,7 @@
   <title>GTAMapping 経路編集</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://player.twitch.tv/js/embed/v1.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@100..700&display=swap" rel="stylesheet">
@@ -57,7 +58,7 @@
       top: 10px;
       left: 10px;
       z-index: 1000;
-      max-width: min(560px, calc(100vw - 20px));
+      width: min(560px, calc(100vw - 20px));
       display: flex;
       flex-direction: column;
       gap: 6px;
@@ -100,16 +101,12 @@
     }
 
     .動画欄 {
-      position: absolute;
-      right: 10px;
-      top: 10px;
-      z-index: 1000;
-      width: min(640px, calc(100vw - 20px));
+      width: 100%;
       aspect-ratio: 16 / 9;
       background: #000;
     }
 
-    .動画欄 > * {
+    .動画欄 * {
       width: 100%;
       height: 100%;
     }
@@ -126,11 +123,11 @@
       <button id="施設">施設</button>
       <span id="状態"></span>
     </div>
+    <div class="動画欄"><div id="動画"></div></div>
     <div class="行" id="一覧"></div>
     <div id="説明"></div>
     <div class="行" id="自動調整"><button id="微調整">微調整</button><span>線をダブルクリックで赤くし、ボタンを押すと自動調整もできます。</span></div>
   </div>
-  <div class="動画欄"><div id="動画"></div></div>
   <script>
     const DOT_R = 2.5;
     const LINE_WIDTH = 1.2;
@@ -149,9 +146,10 @@
     const f = 2 ** MAP.fullZoom;
     const crs = L.extend({}, L.CRS.Simple, { transformation: new L.Transformation(MAP.scale / f, MAP.x0 / f, -MAP.scale / f, MAP.y0 / f) });
     const bounds = L.latLngBounds([MAP.y0 / MAP.scale, -MAP.x0 / MAP.scale], [(MAP.y0 - MAP.height) / MAP.scale, (MAP.width - MAP.x0) / MAP.scale]);
-    const map = L.map('地図', { crs, zoomControl: false, attributionControl: false, zoomSnap: 0.25, zoomDelta: 0.5, maxBounds: bounds.pad(0.25), dragging: false, boxZoom: false, doubleClickZoom: false, zoomAnimation: false });
+    const map = L.map('地図', { crs, zoomControl: false, attributionControl: false, zoomSnap: 0.25, zoomDelta: 0.5, dragging: false, boxZoom: false, doubleClickZoom: false, zoomAnimation: false });
     L.tileLayer('../site/tiles/{z}/{x}/{y}.jpg', { tileSize: 256, noWrap: true, bounds, minZoom: 0, maxNativeZoom: MAP.maxNativeZoom, maxZoom: MAP.fullZoom + 3 }).addTo(map);
-    map.fitBounds(bounds);
+    map.fitBounds(bounds, { paddingTopLeft: [Math.min(document.querySelector('.操作欄').offsetWidth + 20, innerWidth / 2), 0] });
+    map.setMaxBounds(bounds.pad(0.25).extend(map.getBounds()));
     map.setMinZoom(map.getZoom() - 1);
 
     const canvas = document.createElement('canvas');
@@ -185,6 +183,17 @@
         xy.forEach((q, i) => { if (i && !cut(t, i) && (t.points[i][4] === 'f' || t.points[i - 1][4] === 'f')) ctx.moveTo(xy[i - 1].x, xy[i - 1].y), ctx.lineTo(q.x, q.y); });
         Object.assign(ctx, { strokeStyle: '#f00', lineWidth: LINE_WIDTH + 1 });
         ctx.stroke();
+        for (const i of t.sel) {
+          if (i + 1 >= xy.length || cut(t, i + 1) || t.points[i][4] === 'f' || t.points[i + 1][4] === 'f') continue;
+          const a = xy[i], b = xy[i + 1], grad = ctx.createLinearGradient(a.x, a.y, b.x, b.y);
+          grad.addColorStop(0, '#ff0');
+          grad.addColorStop(1, '#000');
+          Object.assign(ctx, { strokeStyle: grad, lineWidth: LINE_WIDTH + 1 });
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
         xy.forEach((q, i) => {
           if (q.x < -10 || q.y < -10 || q.x > size.x + 10 || q.y > size.y + 10) return;
           const on = t.sel.has(i);
@@ -206,7 +215,7 @@
       placeScreen = [];
       if (placeMode) for (const p of eventData.places) {
         const q = map.latLngToContainerPoint([p.y, p.x]);
-        Object.assign(ctx, { font: PLACE_FONT, textBaseline: 'middle', lineJoin: 'round', lineWidth: 3, strokeStyle: '#fff', fillStyle: '#000' });
+        Object.assign(ctx, { font: PLACE_FONT, textBaseline: 'middle', lineJoin: 'round', lineWidth: 3, strokeStyle: '#fff', fillStyle: p.name === 'warp' ? '#f00' : '#000' });
         ctx.beginPath();
         ctx.arc(q.x, q.y, 4, 0, Math.PI * 2);
         ctx.fill();
@@ -276,12 +285,48 @@
       draw();
     });
 
+    // YouTube と Twitch（video が twitch: で始まる）を YT.Player と同じ呼び方で切り替えて再生する
+    function makePlayer(el, onState = () => { }) {
+      const [ytBox, twBox] = [0, 1].map(() => el.appendChild(document.createElement('div')));
+      const ytSpot = ytBox.appendChild(document.createElement('div'));
+      let y = null, t = null, kind = 'yt', twState = -1, twVid = '', twSeek = null;
+      const tw = () => kind === 'tw';
+      const use = (video, at, play) => {
+        kind = video.startsWith('twitch:') ? 'tw' : 'yt';
+        ytBox.hidden = tw();
+        twBox.hidden = !tw();
+        if (!tw()) {
+          if (t) t.pause();
+          if (!y) y = new YT.Player(ytSpot, { videoId: video, playerVars: { start: at, autoplay: play ? 1 : 0, playsinline: 1, origin: location.origin }, events: { onStateChange: e => !tw() && onState(e) } });
+          else if (y.cueVideoById) play ? y.loadVideoById(video, at) : y.cueVideoById(video, at);
+          return;
+        }
+        if (y && y.pauseVideo) y.pauseVideo();
+        twState = play ? 1 : 5;
+        twSeek = at;
+        if (t && twVid === video) { t.seek(at); twSeek = null; return play ? t.play() : t.pause(); }
+        twVid = video;
+        if (t) { t.setVideo(video.slice(7), at); return play ? t.play() : t.pause(); }
+        t = new Twitch.Player(twBox, { video: video.slice(7), time: `${Math.floor(at / 3600)}h${Math.floor(at % 3600 / 60)}m${Math.floor(at % 60)}s`, autoplay: play, parent: [location.hostname], width: '100%', height: '100%' });
+        [[Twitch.Player.PLAY, 1], [Twitch.Player.PAUSE, 2], [Twitch.Player.ENDED, 0]].forEach(([ev, s]) => t.addEventListener(ev, () => { twState = s; if (s === 1 && twSeek !== null) { t.seek(twSeek); twSeek = null; } if (tw()) onState({ data: s }); }));
+      };
+      return {
+        loadVideoById: (v, at) => use(v, at, true),
+        cueVideoById: (v, at) => use(v, at, false),
+        getPlayerState: () => tw() ? twState : y && y.getPlayerState ? y.getPlayerState() : -1,
+        getCurrentTime: () => tw() ? t.getCurrentTime() : y.getCurrentTime(),
+        seekTo: at => tw() ? t.seek(at) : y.seekTo(at, true),
+        playVideo: () => tw() ? t.play() : y.playVideo(),
+        pauseVideo: () => tw() ? t.pause() : y.pauseVideo(),
+        stopVideo: () => tw() ? t.pause() : y && y.stopVideo && y.stopVideo(),
+      };
+    }
+
     function showVideo(t, time, play) {
       current = t;
       if (!window.YT || !YT.Player || !t.parts.length) return;
       const part = t.parts.filter(p => p.start <= time).pop() || t.parts[0], at = Math.max(0, Math.floor(time - part.start));
-      if (!player) return player = new YT.Player('動画', { videoId: part.video, playerVars: { start: at, autoplay: play ? 1 : 0, playsinline: 1, origin: location.origin } });
-      if (!player.cueVideoById) return;
+      player = player || makePlayer(document.getElementById('動画'));
       play ? player.loadVideoById(part.video, at) : player.cueVideoById(part.video, at);
     }
 
@@ -374,6 +419,9 @@
       return { member: m.id, color: m.color, files, heads: data.map(({ points, ...h }) => h), points: pts.map(x => x.p), src: pts.map(x => x.k), parts: data.filter(d => d.video).map(d => ({ video: d.video, start: d.start + (d.offset || 0) })).sort((a, b) => a.start - b.start), sel: new Set(), dirty: false };
     }
 
+    const STORE = 'gtamapping-edit';
+    const remember = () => { try { localStorage.setItem(STORE, JSON.stringify({ day: +document.getElementById('日付').value, ids: [...shownIds] })); } catch { } };
+
     async function loadDay(day) {
       if (tracks.some(t => t.dirty) && !confirm('保存していない変更があります。破棄して日付を変えますか？')) return false;
       tracks = [];
@@ -394,8 +442,10 @@
           tracks.filter(t => t.member === m.id).forEach(t => t.sel.clear());
         }
         b.classList.toggle('非表示', !on);
+        remember();
         draw();
       });
+      remember();
       draw();
       return true;
     }
@@ -462,10 +512,13 @@
       members = event.members.map(m => ({ ...m, days: index[m.id] || {} }));
       const dayPick = document.getElementById('日付');
       dayPick.innerHTML = DAYS.map((d, i) => `<option value="${i + 1}" ${members.some(m => m.days[i + 1]) ? '' : 'disabled'}>DAY${i + 1}（${d.slice(5)}）</option>`).join('');
-      let shownDay = DAYS.findIndex((_, i) => members.some(m => m.days[i + 1])) + 1 || 1;
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(STORE)) || {}; } catch { }
+      let shownDay = dayPick.options[saved.day - 1] && !dayPick.options[saved.day - 1].disabled ? saved.day : DAYS.findIndex((_, i) => members.some(m => m.days[i + 1])) + 1 || 1;
       dayPick.onchange = async () => { if (await loadDay(+dayPick.value)) shownDay = +dayPick.value; else dayPick.value = shownDay; };
       dayPick.value = shownDay;
       await loadDay(shownDay);
+      for (const id of saved.day === shownDay ? saved.ids || [] : []) await document.querySelector(`#一覧 [data-id="${id}"]`)?.onclick();
       window.onYouTubeIframeAPIReady = () => current && showVideo(current, current.points[0][0]);
       const api = document.createElement('script');
       api.src = 'https://www.youtube.com/iframe_api';
