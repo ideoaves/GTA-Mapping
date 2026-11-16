@@ -706,7 +706,7 @@
       }));
       tracks.forEach(t => [...t.done, ...t.cur, ...t.later, ...t.curLater].forEach(l => l.on('click', e => jumpTo(t, e.latlng))));
       tracks.forEach(t => t.head.on('click', () => { if (t.video && !slots.some(s => s.track === t)) setSlot(slots[0], t); seekVideo(); }));
-      const ts = tracks.flatMap(t => [t.points[0][0], t.points[t.points.length - 1][0]]);
+      const ts = tracks.filter(t => t.points.length).flatMap(t => [t.points[0][0], t.points[t.points.length - 1][0]]);
       tMin = Math.min(...ts); tMax = Math.max(...ts);
       Object.assign(slider, { min: tMin, max: tMax, value: tMin });
       const jobOf = t => Object.keys(GROUPS).find(j => GROUPS[j].includes(t.id));
