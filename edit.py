@@ -14,7 +14,6 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    # edit.html の微調整ボタンから届いた経路名で fine-tune.py を回し、ログを返す
     def do_POST(self):
         if self.path != '/editor/fine-tune':
             return self.send_error(404)
@@ -31,7 +30,6 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
 
-# editor のページを開く。サーバーがまだ無ければこのプロセスで立て、wait なら閉じるまで動かし続ける
 def open_page(page, wait):
     try:
         server = ThreadingHTTPServer(('localhost', PORT), Handler)

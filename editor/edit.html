@@ -252,7 +252,6 @@
     const begin = () => before = snap();
     const commit = () => { if (before && snap().text !== before.text) undo.push(before), redo = []; before = null; };
 
-    // 履歴の一方から状態を取り出して戻し、今の状態をもう一方へ積む
     function restore(from, to) {
       const s = from.pop();
       if (!s) return;
@@ -285,7 +284,6 @@
       draw();
     });
 
-    // YouTube と Twitch（video が twitch: で始まる）を YT.Player と同じ呼び方で切り替えて再生する
     function makePlayer(el, onState = () => { }) {
       const [ytBox, twBox] = [0, 1].map(() => el.appendChild(document.createElement('div')));
       const ytSpot = ytBox.appendChild(document.createElement('div'));
@@ -332,7 +330,6 @@
 
     const box = map.getContainer();
     box.addEventListener('contextmenu', e => e.preventDefault());
-    // 手で足した点をダブルクリックすると、微調整の目印の赤い点と切り替える
     box.addEventListener('dblclick', e => {
       if (placeMode) return;
       const r = box.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, l = lineAt(x, y);
@@ -412,7 +409,6 @@
       draw();
     });
 
-    // メンバーのその日の経路ファイルを読み、編集用にひとつの点列へまとめる
     async function readTrack(m, files) {
       const data = await Promise.all(files.map(async f => (await fetch(`../site/${f}`, { cache: 'no-store' })).json()));
       const pts = data.flatMap((d, k) => d.points.map(p => ({ p: [p[0] + zero(d), ...p.slice(1)], k }))).sort((a, b) => a.p[0] - b.p[0]);
@@ -450,7 +446,6 @@
       return true;
     }
 
-    // 変更した経路と施設を site フォルダへ書き出す
     async function save() {
       const dirty = tracks.filter(t => t.dirty);
       if (!dirty.length && !placesDirty) return true;
@@ -477,7 +472,6 @@
     }
     document.getElementById('保存').onclick = save;
 
-    // 赤い点のある経路を保存してから edit.py に fine-tune.py を回してもらい、結果を読み直す
     document.getElementById('微調整').onclick = async e => {
       const targets = tracks.filter(t => t.points.some(p => p[4] === 'f'));
       if (!targets.length) return alert('赤い点がありません。手で足した点をダブルクリックすると赤くなります。');

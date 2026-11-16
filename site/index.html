@@ -423,8 +423,9 @@
     let MEMBERS = [], GROUPS = {}, GROUP_COLORS = {}, PLACES = [], DAYS = [];
     const PLAY_SPEED = 60;
     const GAP_SECONDS = 300;
-    const CURVE_STEP = 15;
-    const CURVE_MAX = 24;
+    const CURVE_STEP = 50;
+    const CURVE_MAX = 8;
+    const PAST_REDRAW_MS = 1000;
     const LINE_WIDTH = 1.6;
     const LINE_OPACITY = 0.85;
     const EDGE_WIDTH = 2;
@@ -487,13 +488,13 @@
         const seg = i >= 0 && tr.segs[i], next = seg && tr.points[i + 1];
         const k = next ? (now - last[0]) / (next[0] - last[0]) : 0;
         const head = next ? seg.at(k) : [last[2], last[1]];
-        if (tr.key !== `${i} ${pathMode}`) {
-          const full = (from, to) => tr.segs.slice(from, to).filter(Boolean).map(s => [s, 0, 1]);
-          tr.key = `${i} ${pathMode}`;
+        const full = (from, to) => tr.segs.slice(from, to).filter(Boolean).map(s => [s, 0, 1]);
+        if (tr.mode !== pathMode || i < tr.base || i - tr.base > 50 || (i !== tr.base && performance.now() - tr.baseAt > PAST_REDRAW_MS)) {
+          Object.assign(tr, { mode: pathMode, base: i, baseAt: performance.now() });
           put(tr.done, tr.doneEdge, pathMode === 'none' ? [] : full(0, Math.max(0, i)));
           put(tr.later, tr.laterEdge, pathMode === 'all' ? full(i + 1) : []);
         }
-        put(tr.cur, tr.curEdge, pathMode !== 'none' && next ? [[seg, 0, k]] : []);
+        put(tr.cur, tr.curEdge, pathMode !== 'none' && i >= 0 ? [...full(Math.max(0, tr.base), i), ...(next ? [[seg, 0, k]] : [])] : []);
         put(tr.curLater, tr.curLaterEdge, pathMode === 'all' && next ? [[seg, k, 1]] : []);
         const fresh = (next || now - last[0] <= GAP_SECONDS ? 1 : 0.35) * (approx(last) || (next && approx(next)) ? 0.6 : 1);
         if (i < 0 || (i === tr.points.length - 1 && now - last[0] > GAP_SECONDS)) tr.head.remove();
@@ -541,7 +542,6 @@
       slots.forEach(s => { if (s !== clock && active(s) && (partAt(s.track) !== s.part || Math.abs(s.part.start + s.player.getCurrentTime() - slider.value) > 2)) seekSlot(s); });
     }, 250);
 
-    // YouTube と Twitch（video が twitch: で始まる）を YT.Player と同じ呼び方で切り替えて再生する
     function makePlayer(el, onState = () => { }) {
       const [ytBox, twBox] = [0, 1].map(() => el.appendChild(document.createElement('div')));
       const ytSpot = ytBox.appendChild(document.createElement('div'));
@@ -689,7 +689,7 @@
     })();
 
     async function loadDay(day) {
-      tracks.forEach(t => t.layers.forEach(l => l.remove()));
+      tracks.splice(0).forEach(t => t.layers.forEach(l => l.remove()));
       tracks = await Promise.all(MEMBERS.filter(l => l.days[day]).map(async l => {
         const ds = (await Promise.all([].concat(l.days[day]).map(async f => (await fetch(f)).json()))).sort((a, b) => a.start - b.start);
         const zero = x => 'offset' in x ? x.start + x.offset : 0;
