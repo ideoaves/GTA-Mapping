@@ -88,3 +88,7 @@ site/の中身が実際のMAPサイトです。これを公開すれば完成で
 - 着想: [にじGTAライバーMAP](https://ide-an.github.io/nijigta-livers-map/)（[技術的な話](https://github.com/ide-an/nijigta-livers-map/blob/main/doc/technical_detail.md)）
 - 地図の表示: [Leaflet](https://leafletjs.com/) 1.9.4（BSD-2-Clause）
 - 文字認識: [EasyOCR](https://github.com/JaidedAI/EasyOCR)（Apache-2.0）
+
+## ライセンス
+
+コード部分のみ [MIT-0](LICENSE) です。地図画像、配信からの画像等は各権利者に帰属します。
