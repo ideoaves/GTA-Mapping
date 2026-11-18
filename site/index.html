@@ -713,7 +713,7 @@
       const members = job => tracks.filter(t => jobOf(t) === job);
       const jobOn = saved.jobOn = saved.jobOn || {};
       const refresh = () => {
-        saved.hidden = [...(saved.hidden || []).filter(id => !tracks.some(t => t.id === id)), ...tracks.filter(t => !t.visible).map(t => t.id)];
+        saved.hidden = [...new Set([...(saved.hidden || []).filter(id => !tracks.some(t => t.id === id)), ...tracks.filter(t => !t.visible).map(t => t.id)])];
         save();
         tracks.forEach(t => {
           const job = jobOn[jobOf(t)] && GROUP_COLORS[jobOf(t)];
@@ -733,8 +733,8 @@
       document.getElementById('凡例').innerHTML = '<div class="職業行"><button class="切替 職業" data-every>全員</button></div>' + rows((job, absent) => `<button class="切替 職業 ${absent}" data-color="${job}">${job}</button><button class="切替 職業 ${absent}" data-all="${job}">全員</button>`,
         l => `<button data-id="${l.id}" class="切替 ${l.days[day] ? '' : '不参加'}" style="--色: ${l.color}; --文字色: ${inkOn(l.color)}">${l.name}</button>`);
       document.querySelectorAll('#凡例 [data-id]').forEach(b => b.onclick = () => { const t = tracks.find(t => t.id === b.dataset.id); if (t) { t.visible = !t.visible; refresh(); } });
-      document.querySelector('#凡例 [data-every]').onclick = () => { const on = !tracks.every(t => t.visible); tracks.forEach(t => t.visible = on); refresh(); };
-      document.querySelectorAll('#凡例 [data-all]').forEach(b => b.onclick = () => { const ts = members(b.dataset.all), on = !ts.every(t => t.visible); ts.forEach(t => t.visible = on); refresh(); });
+      document.querySelector('#凡例 [data-every]').onclick = () => { const on = !tracks.every(t => t.visible); tracks.forEach(t => t.visible = on); saved.hidden = on ? [] : MEMBERS.map(l => l.id); refresh(); };
+      document.querySelectorAll('#凡例 [data-all]').forEach(b => b.onclick = () => { const ts = members(b.dataset.all), ids = GROUPS[b.dataset.all], on = !ts.every(t => t.visible); ts.forEach(t => t.visible = on); saved.hidden = on ? (saved.hidden || []).filter(id => !ids.includes(id)) : [...(saved.hidden || []), ...ids]; refresh(); });
       document.querySelectorAll('#凡例 [data-color]').forEach(b => b.onclick = () => { jobOn[b.dataset.color] = !jobOn[b.dataset.color]; refresh(); });
       refresh();
       slots.forEach(s => {
