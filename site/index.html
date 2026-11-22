@@ -407,6 +407,7 @@
       <button id="施設名" class="切替 地図ボタン">施設名</button>
     </div>
     <div class="操作盤">
+      <button data-倍率="-10" title="10倍速で巻き戻し"></button>
       <button id="再生" title="再生"></button>
       <button id="早送り" data-倍率="10" title="10倍速"></button>
       <button class="倍速" data-倍率="60" title="60倍速">min/s</button>
@@ -524,12 +525,12 @@
     }, true);
     const playBtn = document.getElementById('再生'), fastBtns = [...document.querySelectorAll('[data-倍率]')];
     const icon = d => `<svg viewBox="0 0 16 16"><path d="${d}"/></svg>`;
-    const PLAY_ICON = icon('M4 2l10 6-10 6z'), PAUSE_ICON = icon('M3 2h4v12H3zM9 2h4v12H9z'), FAST_ICON = icon('M1 3l7 5-7 5zM8 3l7 5-7 5z');
+    const PLAY_ICON = icon('M4 2l10 6-10 6z'), PAUSE_ICON = icon('M3 2h4v12H3zM9 2h4v12H9z'), FAST_ICON = icon('M1 3l7 5-7 5zM8 3l7 5-7 5z'), REWIND_ICON = icon('M15 3l-7 5 7 5zM8 3l-7 5 7 5z');
     const active = s => s.track && s.player && s.player.getPlayerState;
     const playing = s => active(s) && s.player.getPlayerState() === 1;
     const videoPlaying = () => slots.some(playing);
     const updateButtons = () => { playBtn.innerHTML = videoPlaying() || solo ? PAUSE_ICON : PLAY_ICON; fastBtns.forEach(b => b.innerHTML = fast === +b.dataset.倍率 ? PAUSE_ICON : b.label); };
-    fastBtns.forEach(b => b.label = b.textContent || FAST_ICON);
+    fastBtns.forEach(b => b.label = b.textContent || (b.dataset.倍率 < 0 ? REWIND_ICON : FAST_ICON));
     updateButtons();
 
     const partAt = track => track.parts.filter(p => p.start <= +slider.value).pop() || track.parts[0];
@@ -594,6 +595,8 @@
       s.pick.textContent = track ? track.name : '動画を選択';
       s.pick.style.cssText = track ? `--色: ${track.color}; --文字色: ${inkOn(track.color)}` : '';
       s.el.classList.toggle('空', !track);
+      (saved.slots = saved.slots || [])[slots.indexOf(s)] = track ? track.id : null;
+      save();
       if (!track) { if (s.player && s.player.stopVideo) s.player.stopVideo(); return updateButtons(); }
       s.part = partAt(track);
       const at = Math.max(0, Math.floor(+slider.value - s.part.start));
@@ -603,9 +606,9 @@
 
     function tick(ts) {
       if (!fast && !solo) return ticking = false;
-      if (lastFrame && !dragging) slider.value = Math.min(tMax, +slider.value + (ts - lastFrame) / 1000 * (fast || 1));
+      if (lastFrame && !dragging) slider.value = Math.max(tMin, Math.min(tMax, +slider.value + (ts - lastFrame) / 1000 * (fast || 1)));
       lastFrame = ts; draw();
-      if (+slider.value >= tMax) { solo = false; setFast(0); updateButtons(); return ticking = false; }
+      if (fast < 0 ? +slider.value <= tMin : +slider.value >= tMax) { solo = false; setFast(0); updateButtons(); return ticking = false; }
       requestAnimationFrame(tick);
     }
     const startClock = () => { lastFrame = 0; if (!ticking) { ticking = true; requestAnimationFrame(tick); } };
@@ -681,7 +684,8 @@
       L.tileLayer('tiles/{z}/{x}/{y}.jpg', { tileSize: 256, noWrap: true, bounds, minZoom: 0, maxNativeZoom: MAP.maxNativeZoom, maxZoom: MAP.fullZoom + 2 }).addTo(map);
       map.fitBounds(bounds);
       map.setMinZoom(map.getZoom() - 1);
-      map.setView([START_VIEW.lat, START_VIEW.lng], START_VIEW.zoom);
+      map.setView(...(saved.view || [[START_VIEW.lat, START_VIEW.lng], START_VIEW.zoom]));
+      map.on('moveend', () => { const c = map.getCenter(); saved.view = [[c.lat, c.lng], map.getZoom()]; save(); });
       const dayPick = document.getElementById('日付');
       map.createPane('施設').style.zIndex = 440;
       const placeLayer = L.layerGroup(PLACES.map(p => L.marker([p.y, p.x], { pane: '施設', interactive: false, icon: L.divIcon({ className: '施設札', html: `<span>${p.name}</span>` }) })));
@@ -696,6 +700,10 @@
       dayPick.onchange = () => { saved.day = +dayPick.value; save(); loadDay(saved.day); };
       dayPick.value = MEMBERS.some(l => l.days[saved.day]) ? saved.day : DAYS.findIndex((_, i) => MEMBERS.some(l => l.days[i + 1])) + 1 || 1;
       await loadDay(+dayPick.value || 1);
+      window.onYouTubeIframeAPIReady = () => slots.forEach((s, k) => { const t = tracks.find(t => t.id === (saved.slots || [])[k] && t.video); if (t) setSlot(s, t); });
+      const keepAt = () => { saved.at = [+dayPick.value, +slider.value]; save(); };
+      addEventListener('pagehide', keepAt);
+      document.addEventListener('visibilitychange', () => document.hidden && keepAt());
       const api = document.createElement('script');
       api.src = 'https://www.youtube.com/iframe_api';
       document.head.appendChild(api);
@@ -721,7 +729,7 @@
       tracks.forEach(t => t.head.on('click', () => { if (t.video && !slots.some(s => s.track === t)) setSlot(slots[0], t); seekVideo(); }));
       const ts = tracks.filter(t => t.points.length).flatMap(t => [t.points[0][0], t.points[t.points.length - 1][0]]);
       tMin = Math.min(...ts); tMax = Math.max(...ts);
-      Object.assign(slider, { min: tMin, max: tMax, value: tMin });
+      Object.assign(slider, { min: tMin, max: tMax, value: saved.at && saved.at[0] === day ? saved.at[1] : tMin });
       const jobOf = t => Object.keys(GROUPS).find(j => GROUPS[j].includes(t.id));
       const members = job => tracks.filter(t => jobOf(t) === job);
       const jobOn = saved.jobOn = saved.jobOn || {};
