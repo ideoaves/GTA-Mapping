@@ -342,6 +342,16 @@
       fill: #aaa;
     }
 
+    .倍速 {
+      min-width: 24px;
+      font-size: 11px;
+      color: #fff;
+    }
+
+    .倍速 svg {
+      margin: auto;
+    }
+
     @media (max-width: 900px) {
       body {
         overflow: auto;
@@ -398,7 +408,8 @@
     </div>
     <div class="操作盤">
       <button id="再生" title="再生"></button>
-      <button id="早送り" title="60倍速"></button>
+      <button id="早送り" data-倍率="10" title="10倍速"></button>
+      <button class="倍速" data-倍率="60" title="60倍速">min/s</button>
       <input type="range" id="時刻バー" min="0" max="1" step="any" value="0">
       <span class="時刻" id="時刻表示">--</span>
     </div>
@@ -421,7 +432,6 @@
   </div>
   <script>
     let MEMBERS = [], GROUPS = {}, GROUP_COLORS = {}, PLACES = [], DAYS = [];
-    const PLAY_SPEED = 60;
     const GAP_SECONDS = 300;
     const CURVE_STEP = 50;
     const CURVE_MAX = 8;
@@ -504,7 +514,7 @@
       document.getElementById('時刻表示').textContent = new Date(now * 1000).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo' });
     }
 
-    let fast = false, solo = false, ticking = false, resume = false, dragging = false, seekTimer = 0, lastFrame = 0;
+    let fast = 0, solo = false, ticking = false, resume = false, dragging = false, seekTimer = 0, lastFrame = 0;
     const slots = [...document.querySelectorAll('.動画窓')].map(el => ({ el, pick: el.querySelector('.動画選択'), list: el.querySelector('.動画候補'), player: null, track: null }));
     slots.forEach(s => s.pick.onclick = () => { s.list.style.maxHeight = `${Math.min(MENU_HEIGHT, s.pick.getBoundingClientRect().top - 14)}px`; s.list.hidden = !s.list.hidden; });
     document.addEventListener('pointerdown', e => {
@@ -512,13 +522,14 @@
       const legend = document.querySelector('.凡例');
       if (!legend.contains(e.target)) legend.open = false;
     }, true);
-    const playBtn = document.getElementById('再生'), fastBtn = document.getElementById('早送り');
+    const playBtn = document.getElementById('再生'), fastBtns = [...document.querySelectorAll('[data-倍率]')];
     const icon = d => `<svg viewBox="0 0 16 16"><path d="${d}"/></svg>`;
     const PLAY_ICON = icon('M4 2l10 6-10 6z'), PAUSE_ICON = icon('M3 2h4v12H3zM9 2h4v12H9z'), FAST_ICON = icon('M1 3l7 5-7 5zM8 3l7 5-7 5z');
     const active = s => s.track && s.player && s.player.getPlayerState;
     const playing = s => active(s) && s.player.getPlayerState() === 1;
     const videoPlaying = () => slots.some(playing);
-    const updateButtons = () => { playBtn.innerHTML = videoPlaying() || solo ? PAUSE_ICON : PLAY_ICON; fastBtn.innerHTML = fast ? PAUSE_ICON : FAST_ICON; };
+    const updateButtons = () => { playBtn.innerHTML = videoPlaying() || solo ? PAUSE_ICON : PLAY_ICON; fastBtns.forEach(b => b.innerHTML = fast === +b.dataset.倍率 ? PAUSE_ICON : b.label); };
+    fastBtns.forEach(b => b.label = b.textContent || FAST_ICON);
     updateButtons();
 
     const partAt = track => track.parts.filter(p => p.start <= +slider.value).pop() || track.parts[0];
@@ -586,24 +597,26 @@
       if (!track) { if (s.player && s.player.stopVideo) s.player.stopVideo(); return updateButtons(); }
       s.part = partAt(track);
       const at = Math.max(0, Math.floor(+slider.value - s.part.start));
-      s.player = s.player || makePlayer(s.el.querySelector('.プレーヤー'), e => { if (e.data === 1 && fast) { resume = true; setFast(false); } else if (e.data === 1) playAll(); if (e.data === 2) pauseAll(); updateButtons(); });
+      s.player = s.player || makePlayer(s.el.querySelector('.プレーヤー'), e => { if (e.data === 1 && fast) { resume = true; setFast(0); } else if (e.data === 1) playAll(); if (e.data === 2) pauseAll(); updateButtons(); });
       s.player.cueVideoById(s.part.video, at);
     }
 
     function tick(ts) {
       if (!fast && !solo) return ticking = false;
-      if (lastFrame && !dragging) slider.value = Math.min(tMax, +slider.value + (ts - lastFrame) / 1000 * (fast ? PLAY_SPEED : 1));
+      if (lastFrame && !dragging) slider.value = Math.min(tMax, +slider.value + (ts - lastFrame) / 1000 * (fast || 1));
       lastFrame = ts; draw();
-      if (+slider.value >= tMax) { solo = false; setFast(false); updateButtons(); return ticking = false; }
+      if (+slider.value >= tMax) { solo = false; setFast(0); updateButtons(); return ticking = false; }
       requestAnimationFrame(tick);
     }
     const startClock = () => { lastFrame = 0; if (!ticking) { ticking = true; requestAnimationFrame(tick); } };
     const playSolo = () => { solo = true; startClock(); };
 
-    function setFast(on) {
-      if (fast === on) return;
-      fast = on;
-      if (on) {
+    function setFast(speed) {
+      if (fast === speed) return;
+      const was = fast;
+      fast = speed;
+      if (was && speed) return updateButtons();
+      if (speed) {
         resume = videoPlaying() || solo;
         solo = false;
         pauseAll();
@@ -617,11 +630,11 @@
 
     playBtn.onclick = () => {
       if (videoPlaying() || solo) { solo = false; pauseAll(); return updateButtons(); }
-      if (fast) setFast(false);
+      if (fast) setFast(0);
       slots.some(active) ? playAll() : playSolo();
       updateButtons();
     };
-    fastBtn.onclick = () => setFast(!fast);
+    fastBtns.forEach(b => b.onclick = () => setFast(fast === +b.dataset.倍率 ? 0 : +b.dataset.倍率));
     slider.oninput = () => { draw(); if (fast) return; clearTimeout(seekTimer); seekTimer = setTimeout(seekVideo, 250); };
     slider.addEventListener('pointerdown', () => dragging = true);
     slider.onchange = () => { dragging = false; clearTimeout(seekTimer); if (!fast) seekVideo(); };
